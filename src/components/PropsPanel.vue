@@ -36,9 +36,9 @@ import type { AlignAction, UpdatePatch } from '../designer/types'
 import {
   FONT_OPTIONS,
   GRID_SIZES,
-  MM_TO_PT,
   PAGE_PRESETS,
-  PT_TO_MM,
+  PX_PER_MM,
+  PX_TO_MM,
   clamp,
   round,
 } from '../designer/units'
@@ -47,7 +47,7 @@ const designer = useDesigner()
 const { selection, page, grid, pagePreset, dataFields } = designer
 
 const isMulti = computed(() => selection.count > 1)
-const fontSizePt = computed(() => round(selection.text.fontSize * MM_TO_PT, 1))
+const fontSizePx = computed(() => round(selection.text.fontSize * PX_PER_MM, 1))
 const opacityPercent = computed(() =>
   Math.round(selection.layout.opacity * 100),
 )
@@ -71,8 +71,8 @@ function setOpacityPercent(value: number) {
   update({ opacity: clamp(value, 0, 100) / 100 })
 }
 
-function setFontSizePt(value: number) {
-  update({ fontSize: clamp(value, 4, 300) * PT_TO_MM })
+function setFontSizePx(value: number) {
+  update({ fontSize: clamp(value, 4, 300) * PX_TO_MM })
 }
 
 function setTextAlign(align: string) {
@@ -266,7 +266,7 @@ function align(action: AlignAction) {
       <InspectorSection title="使用提示" :open="false">
         <p class="hint-line">从左侧添加文本、矩形、椭圆、线条、表格或图片。</p>
         <p class="hint-line">双击文本可在画布内直接编辑；选中元素后在此调整位置、尺寸和样式。</p>
-        <p class="hint-line">画布坐标与尺寸统一使用毫米（mm），字号按磅（pt）显示。</p>
+        <p class="hint-line">画布坐标与尺寸统一使用毫米（mm），字号按像素（px）显示。</p>
         <p class="hint-line" v-pre>在「数据」页维护示例字段，用 {{字段名}} 绑定到文本或表格单元格。</p>
         <p class="hint-line">拖动多个元素时可按住 Shift 点选，属性面板会显示对齐工具。</p>
       </InspectorSection>
@@ -556,12 +556,12 @@ function align(action: AlignAction) {
         <div class="field-grid">
           <NumField
             label="字号"
-            :model-value="fontSizePt"
-            unit="pt"
-            :step="0.5"
+            :model-value="fontSizePx"
+            unit="px"
+            :step="1"
             :min="4"
             :max="300"
-            @update:model-value="setFontSizePt"
+            @update:model-value="setFontSizePx"
           />
           <NumField
             label="行高"

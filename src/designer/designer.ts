@@ -23,10 +23,11 @@ import type {
 } from './types'
 import { emptySelection } from './types'
 import {
+  DEFAULT_FONT_PX,
   DEFAULT_PAGE,
   PAGE_PRESETS,
-  PT_TO_MM,
   PX_PER_MM,
+  PX_TO_MM,
   clamp,
   round,
 } from './units'
@@ -58,7 +59,8 @@ import { buildTableObject } from './tableFabric'
 const STORAGE_KEY = 'doprint.template.v1'
 const HISTORY_LIMIT = 50
 const SNAP_STEP = 1
-const DEFAULT_TEXT_PT = 10.5
+/** Default text size in scene millimetres (14px). */
+const DEFAULT_TEXT_SIZE = DEFAULT_FONT_PX * PX_TO_MM
 const DEFAULT_TEXT_FILL = '#111827'
 const DEFAULT_SHAPE_FILL = '#f3f4f6'
 const DEFAULT_SHAPE_STROKE = '#374151'
@@ -802,7 +804,7 @@ export function createDesigner() {
     const text = new Textbox('双击编辑文本', {
       ...pos,
       width,
-      fontSize: DEFAULT_TEXT_PT * PT_TO_MM,
+      fontSize: DEFAULT_TEXT_SIZE,
       fontFamily: DEFAULT_FONT,
       fontWeight: 'normal',
       fill: DEFAULT_TEXT_FILL,
@@ -1782,7 +1784,7 @@ export function createDesigner() {
     }
 
     if (el.kind === 'text') {
-      const fontSize = Math.max(0.5, el.fontSize || DEFAULT_TEXT_PT * PT_TO_MM)
+      const fontSize = Math.max(0.5, el.fontSize || DEFAULT_TEXT_SIZE)
       const obj = new Textbox(el.text ?? '', {
         ...common,
         width: Math.max(2, el.width || 60),

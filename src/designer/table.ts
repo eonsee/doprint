@@ -5,7 +5,7 @@ import type {
   TableMerge,
   TableVAlign,
 } from './types'
-import { clamp, round } from './units'
+import { DEFAULT_FONT_PX, PX_TO_MM, clamp, round } from './units'
 
 export const TABLE_LIMITS = {
   minRows: 1,
@@ -19,7 +19,7 @@ export const DEFAULT_TABLE = {
   cols: 3,
   rowHeight: 9,
   colWidth: 35,
-  fontSize: 3.5,
+  fontSize: DEFAULT_FONT_PX * PX_TO_MM,
   fontFamily: 'SimSun',
   color: '#111827',
   borderColor: '#4b5563',
@@ -210,7 +210,7 @@ export function normalizeTableConfig(input: unknown): TableConfig {
     cells,
     merges,
     fontSize: Number.isFinite(Number(raw.fontSize))
-      ? round(clamp(Number(raw.fontSize), 0.5, 72), 2)
+      ? round(clamp(Number(raw.fontSize), 0.5, 300 * PX_TO_MM), 2)
       : DEFAULT_TABLE.fontSize,
     fontFamily:
       typeof raw.fontFamily === 'string' && raw.fontFamily

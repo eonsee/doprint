@@ -24,8 +24,8 @@ import {
 } from '../designer/table'
 import {
   FONT_OPTIONS,
-  MM_TO_PT,
-  PT_TO_MM,
+  PX_PER_MM,
+  PX_TO_MM,
   clamp,
   round,
 } from '../designer/units'
@@ -81,8 +81,8 @@ const activeCell = computed<TableCell>(() => {
 
 const canEditText = computed(() => exactRegion.value !== null)
 const cellText = computed(() => activeCell.value.text ?? '')
-const fontSizePt = computed(() =>
-  table.value ? round(table.value.fontSize * MM_TO_PT, 1) : 0,
+const fontSizePx = computed(() =>
+  table.value ? round(table.value.fontSize * PX_PER_MM, 1) : 0,
 )
 const gridStyle = computed(() => {
   if (!table.value) return {}
@@ -181,9 +181,9 @@ function insertCellBinding(key: string) {
   })
 }
 
-function setFontSizePt(value: number) {
+function setFontSizePx(value: number) {
   designer.updateTableStyle({
-    fontSize: clamp(value, 4, 300) * PT_TO_MM,
+    fontSize: clamp(value, 4, 300) * PX_TO_MM,
   })
 }
 
@@ -408,12 +408,12 @@ function toggleCanvasEditing() {
       <div class="field-grid">
         <NumField
           label="字号"
-          :model-value="fontSizePt"
-          unit="pt"
-          :step="0.5"
+          :model-value="fontSizePx"
+          unit="px"
+          :step="1"
           :min="4"
           :max="300"
-          @update:model-value="setFontSizePt"
+          @update:model-value="setFontSizePx"
         />
         <NumField
           label="内边距"

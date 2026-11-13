@@ -1,11 +1,11 @@
 /** CSS px per millimetre at the canonical 96dpi */
 export const PX_PER_MM = 96 / 25.4
 
-/** 1pt in millimetres */
-export const PT_TO_MM = 25.4 / 72
+/** 1px in millimetres at the canonical 96dpi */
+export const PX_TO_MM = 25.4 / 96
 
-/** 1mm in points */
-export const MM_TO_PT = 72 / 25.4
+/** Default design font size, in CSS pixels */
+export const DEFAULT_FONT_PX = 14
 
 export const DEFAULT_PAGE = { width: 210, height: 297 }
 
