@@ -185,6 +185,15 @@ function isActiveSelectionType(type: string): boolean {
   return type.toLowerCase() === 'activeselection'
 }
 
+/** A smart alignment line shown while dragging an element. Scene millimetres. */
+interface AlignmentGuide {
+  orientation: 'vertical' | 'horizontal'
+  /** x for a vertical guide, y for a horizontal guide */
+  position: number
+  from: number
+  to: number
+}
+
 function isTableObject(obj: FabricObject): boolean {
   const anyObj = obj as any
   return (
@@ -554,6 +563,7 @@ export function createDesigner() {
           bakeTransform(target)
         }
       }
+      clearAlignmentGuides()
       refreshSelection()
       refreshLayers()
       scheduleCommit()
@@ -580,7 +590,12 @@ export function createDesigner() {
           top: Math.round(target.top / SNAP_STEP) * SNAP_STEP,
         })
       }
+      const refs = alignmentReferences(target)
       constrainToPrintable(target)
+      snapToAlignment(target, refs)
+      // Margins win over a smart-guide snap at the very page edge.
+      constrainToPrintable(target)
+      computeAlignmentGuides(target, refs)
       refreshSelection()
     })
 
@@ -601,6 +616,7 @@ export function createDesigner() {
     c.on('after:render', (event: any) => {
       if (event.ctx !== (c as any).contextContainer) return
       drawWatermark(event.ctx, view.zoom)
+      drawAlignmentGuides(event.ctx, view.zoom)
       if (!tableEditing.value || !table.value) return
       const active = c.getActiveObject()
       if (!active || !isTableObject(active)) return
@@ -754,6 +770,7 @@ export function createDesigner() {
 
     c.on('mouse:up', () => {
       tablePointerSelecting = false
+      clearAlignmentGuides()
     })
 
     // Fabric's built-in "click again to edit" can be blocked by resize
@@ -1120,6 +1137,178 @@ export function createDesigner() {
       })
       obj.setCoords()
     }
+  }
+
+  // -------------------------------------------------------- alignment guides
+
+  let alignmentGuides: AlignmentGuide[] = []
+
+  /** Visible objects that can act as alignment references for `target`. */
+  function alignmentReferences(target: FabricObject): FabricObject[] {
+    if (!canvas) return []
+    const excluded = new Set<FabricObject>(canvas.getActiveObjects())
+    excluded.add(target)
+    return canvas
+      .getObjects()
+      .filter((obj) => !excluded.has(obj) && obj.visible !== false)
+  }
+
+  /** The three alignment tracks (start / centre / end) of a bounding box. */
+  function alignmentEdges(rect: {
+    left: number
+    top: number
+    width: number
+    height: number
+  }) {
+    return {
+      xs: [rect.left, rect.left + rect.width / 2, rect.left + rect.width],
+      ys: [rect.top, rect.top + rect.height / 2, rect.top + rect.height],
+    }
+  }
+
+  /** Snap the moving object when one of its edges / centres lines up. */
+  function snapToAlignment(target: FabricObject, refs: FabricObject[]) {
+    if (!refs.length) {
+      alignmentGuides = []
+      return
+    }
+    target.setCoords()
+    const moving = target.getBoundingRect()
+    const { xs, ys } = alignmentEdges(moving)
+    // Match roughly within 6 screen pixels.
+    const threshold = Math.min(3, 6 / Math.max(0.01, view.zoom))
+    let bestX = threshold
+    let bestY = threshold
+    let dx = 0
+    let dy = 0
+
+    for (const ref of refs) {
+      const edges = alignmentEdges(ref.getBoundingRect())
+      for (const movingX of xs) {
+        for (const refX of edges.xs) {
+          const delta = refX - movingX
+          const distance = Math.abs(delta)
+          if (distance <= bestX) {
+            bestX = distance
+            dx = delta
+          }
+        }
+      }
+      for (const movingY of ys) {
+        for (const refY of edges.ys) {
+          const delta = refY - movingY
+          const distance = Math.abs(delta)
+          if (distance <= bestY) {
+            bestY = distance
+            dy = delta
+          }
+        }
+      }
+    }
+
+    if (dx || dy) {
+      const anyObj = target as any
+      target.set({
+        left: (anyObj.left ?? 0) + dx,
+        top: (anyObj.top ?? 0) + dy,
+      })
+      target.setCoords()
+    }
+  }
+
+  /** Record the exact edge / centre matches for drawing reference lines. */
+  function computeAlignmentGuides(
+    target: FabricObject,
+    refs: FabricObject[],
+  ) {
+    if (!refs.length) {
+      alignmentGuides = []
+      return
+    }
+    target.setCoords()
+    const moving = target.getBoundingRect()
+    const { xs, ys } = alignmentEdges(moving)
+    const epsilon = 0.05
+    const pad = 4 / Math.max(0.01, view.zoom)
+    const guides: AlignmentGuide[] = []
+
+    for (const ref of refs) {
+      const rect = ref.getBoundingRect()
+      const edges = alignmentEdges(rect)
+      for (const movingX of xs) {
+        for (const refX of edges.xs) {
+          if (Math.abs(movingX - refX) > epsilon) continue
+          guides.push({
+            orientation: 'vertical',
+            position: refX,
+            from: Math.min(moving.top, rect.top) - pad,
+            to:
+              Math.max(moving.top + moving.height, rect.top + rect.height) +
+              pad,
+          })
+        }
+      }
+      for (const movingY of ys) {
+        for (const refY of edges.ys) {
+          if (Math.abs(movingY - refY) > epsilon) continue
+          guides.push({
+            orientation: 'horizontal',
+            position: refY,
+            from: Math.min(moving.left, rect.left) - pad,
+            to:
+              Math.max(moving.left + moving.width, rect.left + rect.width) +
+              pad,
+          })
+        }
+      }
+    }
+
+    // One guide per position, spanning every aligned object.
+    const merged = new Map<string, AlignmentGuide>()
+    for (const guide of guides) {
+      const key = `${guide.orientation}:${round(guide.position, 2)}`
+      const existing = merged.get(key)
+      if (existing) {
+        existing.from = Math.min(existing.from, guide.from)
+        existing.to = Math.max(existing.to, guide.to)
+      } else {
+        merged.set(key, {
+          ...guide,
+          position: round(guide.position, 2),
+        })
+      }
+    }
+    alignmentGuides = [...merged.values()]
+  }
+
+  function drawAlignmentGuides(
+    ctx: CanvasRenderingContext2D,
+    zoom: number,
+  ) {
+    if (!alignmentGuides.length || zoom <= 0) return
+    ctx.save()
+    ctx.strokeStyle = '#f43f5e'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (const guide of alignmentGuides) {
+      if (guide.orientation === 'vertical') {
+        const x = Math.round(guide.position * zoom) + 0.5
+        ctx.moveTo(x, guide.from * zoom)
+        ctx.lineTo(x, guide.to * zoom)
+      } else {
+        const y = Math.round(guide.position * zoom) + 0.5
+        ctx.moveTo(guide.from * zoom, y)
+        ctx.lineTo(guide.to * zoom, y)
+      }
+    }
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  function clearAlignmentGuides() {
+    if (!alignmentGuides.length) return
+    alignmentGuides = []
+    canvas?.requestRenderAll()
   }
 
   // ------------------------------------------------------------- watermark
