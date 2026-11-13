@@ -22,7 +22,8 @@ import {
 } from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
 import { getCellStyle } from '../designer/table'
-import type { AlignAction, UpdatePatch } from '../designer/types'
+import type { AlignAction } from '../designer/designer'
+import type { UpdatePatch } from '../designer/types'
 import {
   DEFAULT_FONT_PX,
   FONT_OPTIONS,

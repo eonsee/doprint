@@ -1,0 +1,12 @@
+/* Demo-only page scaffolding; the published library does not ship this file. */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--bg);
+}

@@ -273,8 +273,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Teleport to="body">
-    <div class="source-modal-mask" data-modal @click.self="emit('close')">
+  <div class="source-modal-mask" data-modal @click.self="emit('close')">
       <div
         class="source-modal"
         role="dialog"
@@ -501,6 +500,5 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </template>
         </div>
       </div>
-    </div>
-  </Teleport>
+  </div>
 </template>

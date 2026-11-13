@@ -42,8 +42,7 @@ function downloadSvg() {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="preview-mask" data-modal @click.self="emit('close')">
+  <div v-if="open" class="preview-mask" data-modal @click.self="emit('close')">
       <div class="preview-dialog">
         <div class="preview-head">
           <div>
@@ -97,6 +96,5 @@ function downloadSvg() {
           <span v-else class="preview-loading">正在生成 PDF 预览…</span>
         </div>
       </div>
-    </div>
-  </Teleport>
+  </div>
 </template>

@@ -62,6 +62,187 @@ npm start
 # 打开 http://127.0.0.1:3301
 ```
 
+## 集成到你的项目（npm 组件库）
+
+设计器同时提供 **Vue 3** 与 **Vue 2.7+** 两套构建，按项目所用版本选择入口（Vue 2.6 及更早版本不支持）。两套构建都包含 ESM + CJS 与 `.d.ts` 类型声明。
+
+### 安装与版本要求
+
+```bash
+npm install doprint-designer
+```
+
+| 依赖 | 版本 | 说明 |
+| --- | --- | --- |
+| Vue | `^3.5.0` 或 `^2.7.0` | peerDependency，由宿主项目提供 |
+| Node.js | 18+ | 仅开发 / 构建需要，浏览器运行时不依赖 Node |
+
+`fabric`、`qrcode`、`jsbarcode`、`pdf-lib` 是包的运行时依赖，安装 `doprint-designer` 时会自动装上，无需单独引入；图标库已经打进构建产物，不需要额外安装。
+
+### 包入口
+
+| 入口 | 内容 |
+| --- | --- |
+| `doprint-designer/vue3` | Vue 3 组件、`createDesigner`、`provideDesigner` / `useDesigner` 与全部类型 |
+| `doprint-designer/vue3/style.css` | Vue 3 样式（必须引入） |
+| `doprint-designer/vue2` | Vue 2.7 组件与类型 |
+| `doprint-designer/vue2/style.css` | Vue 2 样式（必须引入） |
+| `doprint-designer` | 等同于 `doprint-designer/vue3` |
+
+### Vue 3 集成
+
+```vue
+<!-- App.vue -->
+<template>
+  <!-- 容器必须有明确高度，设计器会撑满父容器 -->
+  <div class="designer-host">
+    <DoPrintDesigner @ready="onReady" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { DoPrintDesigner, type Designer, type PageTemplate } from 'doprint-designer/vue3'
+import 'doprint-designer/vue3/style.css'
+
+let designer: Designer | null = null
+
+function onReady(instance: Designer) {
+  // 组件挂载完成，拿到设计器实例
+  designer = instance
+}
+
+/** 保存模板：serialize() 返回可直接 JSON 序列化的 PageTemplate */
+function saveTemplate() {
+  if (!designer) return
+  const template: PageTemplate = designer.serialize()
+  return JSON.stringify(template)
+}
+
+/** 回显模板：传入手工保存的 JSON 文本 */
+async function loadTemplate(text: string) {
+  await designer?.importTemplate(text)
+}
+
+/** 按打印尺寸导出 PDF 字节 */
+async function exportPdf() {
+  if (!designer) return
+  const bytes: Uint8Array = await designer.generatePDF()
+  const blob = new Blob([bytes], { type: 'application/pdf' })
+  const url = URL.createObjectURL(blob)
+  window.open(url)
+  URL.revokeObjectURL(url)
+}
+</script>
+
+<style>
+.designer-host {
+  height: 100vh;
+}
+</style>
+```
+
+### Vue 2.7+ 集成
+
+```js
+// main.js
+import Vue from 'vue'
+import App from './App.vue'
+import { DoPrintDesigner } from 'doprint-designer/vue2'
+import 'doprint-designer/vue2/style.css'
+
+Vue.component('DoPrintDesigner', DoPrintDesigner)
+
+new Vue({ render: (h) => h(App) }).$mount('#app')
+```
+
+```vue
+<!-- App.vue -->
+<template>
+  <div class="designer-host">
+    <DoPrintDesigner @ready="onReady" />
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return { designer: null }
+  },
+  methods: {
+    onReady(designer) {
+      this.designer = designer
+    },
+    saveTemplate() {
+      return JSON.stringify(this.designer.serialize())
+    },
+    async loadTemplate(text) {
+      await this.designer.importTemplate(text)
+    },
+  },
+}
+</script>
+
+<style>
+.designer-host {
+  height: 100vh;
+}
+</style>
+```
+
+### 设计器实例 API
+
+`ready` 事件在组件挂载后触发，参数是设计器实例，与 `createDesigner()` 的返回值一致。常用方法：
+
+| 方法 | 说明 |
+| --- | --- |
+| `serialize()` | 导出当前模板为 `PageTemplate` 普通对象，可直接保存到后端 |
+| `importTemplate(text)` | 从 JSON 文本导入模板并重建画布 |
+| `generateSVG()` | 生成矢量 SVG 字符串 |
+| `generatePDF()` | 生成 PDF 字节（`Uint8Array`） |
+| `newTemplate()` / `openTemplate(id)` | 新建 / 切换本地模板 |
+| `undo()` / `redo()` | 撤销 / 重做 |
+| `addText()` / `addTable(rows, cols)` / `addQrCode()` / `addBarcode()` | 以编程方式添加元素 |
+| `updateSelected(patch)` | 修改选中元素属性 |
+| `setPageSize(width, height)` | 设置页面尺寸（毫米） |
+
+实例上的响应式状态（`templates`、`page`、`selection`、`canUndo`、`canRedo` 等）也可以直接在模板中读取，用于自定义工具栏或保存按钮的禁用状态。
+
+保存到后端的示例：
+
+```ts
+async function saveToServer(designer: Designer) {
+  await fetch('/api/templates/1', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(designer.serialize()),
+  })
+}
+```
+
+### 样式与布局注意事项
+
+- 必须引入与 Vue 版本对应的 `style.css`，否则布局和控件样式会缺失
+- 组件根节点为 `.app-shell`，高度为 `100%`，外层容器必须有明确高度（如 `100vh` 或固定的 Flex 区域）
+- 设计器依赖 Canvas、`localStorage` 和浏览器 API，只能在客户端渲染；Nuxt 等 SSR 框架请用 `<ClientOnly>` 或动态 `import()` 包裹
+- 模板默认自动保存到浏览器 `localStorage`；需要跨设备共享时，用 `serialize()` / `importTemplate()` 接入自己的后端
+
+### 数据绑定与数据源
+
+- 在文本、表格单元格、二维码或条形码中写 `{{字段名}}`，预览和导出时会替换为示例数据中的值
+- 「数据」面板支持手工维护示例数据、导入 JSON，这部分完全在浏览器内完成
+- 数据库连接依赖仓库内的 `server/index.mjs` 本地服务，**不会随 npm 包发布**。纯前端项目如需隐藏或替换数据源入口，可以自行实现 `/api/datasource/*` 接口，或直接使用示例数据 / JSON 导入
+
+### 常见问题
+
+| 问题 | 解决方式 |
+| --- | --- |
+| 设计器高度为 0 或只显示一条边 | 给外层容器设置明确高度，例如 `height: 100vh` |
+| 样式错乱、按钮没有图标 | 确认已引入 `doprint-designer/vue3/style.css` 或 `vue2/style.css` |
+| Vue 2 项目报编译错误 | 升级到 Vue 2.7+，并使用 `doprint-designer/vue2` 入口 |
+| 打包提示 `vue` 重复 | 确认宿主项目只安装一份 Vue，组件库已将 `vue` 设为 external |
+| `importTemplate` 没有反应 | 导入的是模板 JSON 文本而不是对象；可通过 `serialize()` 生成标准格式 |
+| 数据库按钮连接失败 | npm 包不包含本地数据服务，需按仓库 `server/index.mjs` 自行部署 |
+
 ## 使用指南
 
 ### 模板与页面
@@ -187,8 +368,12 @@ npm start
 server/
   index.mjs              本机数据服务（Express + mysql2）
 src/
-  App.vue                页面布局与全局快捷键
-  components/            顶栏、工具栏、属性面板、图层面板、表格编辑器、预览弹窗等
+  App.vue                演示入口（渲染 DoPrintDesigner）
+  index.ts               组件库公共导出
+  lib.ts                 组件库构建入口（额外引入全局样式）
+  components/
+    DoPrintDesigner.vue  设计器根组件：布局、预览弹窗与全局快捷键
+    ...                  顶栏、工具栏、属性面板、图层面板、表格编辑器、预览弹窗等
   designer/
     designer.ts          Fabric 画布、元素操作、历史记录、序列化与预览
     table.ts             表格数据模型与命令
@@ -199,7 +384,11 @@ src/
     pdf.ts               PDF 生成与预览
     types.ts             模板与元素类型定义
     units.ts             px / mm 换算
+build/vue2/              Vue 2.7 组件库构建工具链
+vite.lib.config.ts       Vue 3 组件库构建配置
+dist-lib/                组件库构建产物（npm 包内容，构建生成）
 docs/images/             README 截图
+LICENSE                  Apache License 2.0
 ```
 
 ## 部署到 Vercel / Cloudflare Pages
@@ -216,9 +405,144 @@ docs/images/             README 截图
 - 模板保存在浏览器 localStorage，不同设备 / 浏览器之间不共享
 - 数据源连接依赖本机 `server/index.mjs` 的 Node 服务和可访问的 MySQL，纯静态部署不可用。线上如需数据库连接，Vercel 需要把 `server/index.mjs` 适配为 Serverless Function 并连接公网数据库；Cloudflare Workers 无法直接使用 `mysql2` 的 TCP 连接，需要 Hyperdrive 或独立 HTTP 后端
 
+## 发布到 npm（维护者）
+
+发布脚本、入口映射和 `files` 白名单已在 `package.json` 中配置好。以下流程用于维护者发布新版本。
+
+### 1. 准备账号
+
+1. 在 [npmjs.com](https://www.npmjs.com/signup) 注册账号并完成邮箱验证
+2. 使用官方源登录（国内镜像 `registry.npmmirror.com` 只用于安装，不能发布）：
+
+```bash
+npm login --registry=https://registry.npmjs.org/
+npm whoami --registry=https://registry.npmjs.org/
+```
+
+`package.json` 中已经配置：
+
+```json
+"publishConfig": {
+  "access": "public",
+  "registry": "https://registry.npmjs.org/"
+}
+```
+
+因此 `npm publish` 会自动走官方源；但 `npm login` / `npm whoami` 不受它影响，需要显式加 `--registry`。
+
+### 2. 构建并检查产物
+
+```bash
+npm install
+npm run build:lib        # Vue 3 + Vue 2 + 类型声明
+npm pack --dry-run       # 查看将要发布的文件，应包含 dist-lib、README、LICENSE
+```
+
+`build:lib` 会依次执行：
+
+| 命令 | 作用 |
+| --- | --- |
+| `build:lib:vue3` | 构建 `dist-lib/vue3/` 并生成 `dist-lib/types/` |
+| `build:lib:vue2` | 在 `build/vue2/` 中构建 Vue 2.7 产物 |
+| `build:types:vue2` | 生成 `dist-lib/types-vue2/` |
+
+### 3. 预演发布
+
+```bash
+npm publish --dry-run --registry=https://registry.npmjs.org/
+```
+
+预演会完整走一遍发布流程但不上传，适合首次发布前检查权限和 2FA。
+
+### 4. 正式发布
+
+```bash
+npm publish --registry=https://registry.npmjs.org/
+```
+
+发布前会自动执行 `prepublishOnly`（即 `npm run build:lib`），确保 npm 上的产物与当前源码一致。如果账号开启了双重验证，会提示输入一次性验证码。
+
+### 5. 验证发布结果
+
+```bash
+npm view doprint-designer --registry=https://registry.npmjs.org/
+```
+
+也可以在一个空目录中实际安装验证：
+
+```bash
+mkdir doprint-test && cd doprint-test && npm init -y
+npm install doprint-designer
+node -e "import('doprint-designer/vue3').then(m => console.log(Object.keys(m)))"
+```
+
+### 6. 发布后续版本
+
+npm 不允许重复发布同一个版本号，每次发布前先升级版本：
+
+```bash
+npm version patch   # 0.1.0 -> 0.1.1，修复 bug
+npm version minor   # 0.1.0 -> 0.2.0，新增功能
+npm version major   # 0.1.0 -> 1.0.0，不兼容变更
+
+git push --follow-tags
+npm publish --registry=https://registry.npmjs.org/
+```
+
+### 7. 常见发布错误
+
+| 报错 | 原因 / 解决 |
+| --- | --- |
+| `ENEEDAUTH` | 未登录官方源；使用 `npm login --registry=https://registry.npmjs.org/` |
+| `E403 Forbidden` | 包名已被占用、账号无权限或邮箱未验证；到 npmjs.com 检查 |
+| `E403 ... two-factor authentication` | 账号开启了 2FA，按提示输入 OTP，或使用 `--otp=123456` |
+| `E404` | 包尚未发布；首次发布前用 `npm view` 查询返回 404 属正常 |
+| `EPUBLISHCONFLICT` / `cannot publish over` | 版本号已存在，先执行 `npm version patch` |
+| 安装后代码不是最新 | 淘宝镜像同步有延迟，用 `--registry=https://registry.npmjs.org/` 验证 |
+
+### 8. GitHub Actions 自动发布（可选）
+
+在仓库 Secrets 中配置 `NPM_TOKEN`（npmjs.com → Access Tokens → Automation），然后新建 `.github/workflows/publish.yml`：
+
+```yaml
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+之后推送版本标签即可自动构建并发布：
+
+```bash
+npm version patch
+git push --follow-tags
+```
+
 ## 说明
 
 - 建议使用最新版 Chrome / Edge 等现代浏览器
 - 画布以毫米为设计单位，字号在界面中以 px 展示，便于和常见设计稿对照
 - 模板与示例数据默认保存在浏览器 localStorage，重要模板建议定期使用「导出 JSON」备份
 - 二维码 / 条形码只保存内容文本，加载模板时重新生成，避免模板文件因图片体积过大
+
+## 开源协议
+
+本项目基于 [Apache License 2.0](LICENSE) 开源。

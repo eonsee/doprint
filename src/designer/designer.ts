@@ -427,6 +427,8 @@ export function createDesigner() {
   const savedAt = ref<number | null>(null)
   const notice = ref('')
   const dataFields = ref<DataField[]>([])
+  /** Rendered by the designer root so the dialog is not trapped in a panel's stacking context. */
+  const dataSourceOpen = ref(false)
   /** Editable copy of the selected table's configuration. */
   const table = ref<TableConfig | null>(null)
   const tableSelection = reactive<TableRange>({
@@ -3814,6 +3816,7 @@ export function createDesigner() {
     pagePreset,
     zoomPercent,
     dataFields,
+    dataSourceOpen,
     table,
     tableSelection,
     tableEditing,

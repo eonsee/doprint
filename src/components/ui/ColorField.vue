@@ -35,7 +35,7 @@ function onHexChange(event: Event) {
   const raw = input.value.trim()
   if (!raw) {
     input.value = ''
-    if (clearable) emit('update:modelValue', '')
+    if (props.clearable) emit('update:modelValue', '')
     return
   }
   const normalized = raw.startsWith('#') ? raw : `#${raw}`

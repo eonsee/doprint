@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { PlugZap, Plus, Trash2 } from 'lucide-vue-next'
-import DataSourceModal from './DataSourceModal.vue'
 import InspectorSection from './ui/InspectorSection.vue'
 import { useDesigner } from '../designer/context'
 
 const designer = useDesigner()
 const { dataFields } = designer
 
-const sourceOpen = ref(false)
 const jsonText = ref('')
 
 function addField() {
@@ -88,7 +86,10 @@ function importJson() {
       <p class="data-hint">
         从数据库读取表结构，把字段和首行示例值导入下方「示例数据」。
       </p>
-      <button class="btn ghost wide" @click="sourceOpen = true">
+      <button
+        class="btn ghost wide"
+        @click="designer.dataSourceOpen.value = true"
+      >
         <PlugZap :size="14" />
         连接数据源
       </button>
@@ -123,7 +124,5 @@ function importJson() {
         设计画布显示占位符本身，点击顶部「矢量预览」即可看到使用示例数据替换后的效果。
       </p>
     </InspectorSection>
-
-    <DataSourceModal v-if="sourceOpen" @close="sourceOpen = false" />
   </div>
 </template>

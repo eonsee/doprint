@@ -1,32 +1,92 @@
 {
   "name": "doprint-designer",
-  "private": true,
   "version": "0.1.0",
+  "description": "面向打印场景的可视化模板设计器（Vue 3 / Vue 2.7 组件库）",
+  "license": "Apache-2.0",
   "type": "module",
+  "keywords": [
+    "vue",
+    "vue2",
+    "vue3",
+    "designer",
+    "template",
+    "label",
+    "print",
+    "fabric"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eonsee/doprint.git"
+  },
+  "homepage": "https://doprint.top",
+  "bugs": {
+    "url": "https://github.com/eonsee/doprint/issues"
+  },
+  "main": "./dist-lib/vue3/index.cjs",
+  "module": "./dist-lib/vue3/index.mjs",
+  "types": "./dist-lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist-lib/types/index.d.ts",
+      "import": "./dist-lib/vue3/index.mjs",
+      "require": "./dist-lib/vue3/index.cjs"
+    },
+    "./vue3": {
+      "types": "./dist-lib/types/index.d.ts",
+      "import": "./dist-lib/vue3/index.mjs",
+      "require": "./dist-lib/vue3/index.cjs"
+    },
+    "./vue3/style.css": "./dist-lib/vue3/style.css",
+    "./vue2": {
+      "types": "./dist-lib/types-vue2/index.d.ts",
+      "import": "./dist-lib/vue2/index.mjs",
+      "require": "./dist-lib/vue2/index.cjs"
+    },
+    "./vue2/style.css": "./dist-lib/vue2/style.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist-lib",
+    "README.md"
+  ],
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,green \"node server/index.mjs\" \"vite --host\"",
     "dev:web": "vite --host",
     "dev:api": "node server/index.mjs",
     "build": "vite build",
+    "build:types": "vue-tsc -p tsconfig.lib.json",
+    "build:types:vue2": "node build/fix-vue2-types.mjs",
+    "build:lib:vue3": "vite build --config vite.lib.config.ts && npm run build:types",
+    "build:lib:vue2": "npm --prefix build/vue2 install --no-audit --no-fund && npm --prefix build/vue2 run build",
+    "build:lib": "npm run build:lib:vue3 && npm run build:lib:vue2 && npm run build:types:vue2",
+    "prepublishOnly": "npm run build:lib",
     "preview": "vite preview",
     "start": "node server/index.mjs"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "peerDependencies": {
+    "vue": "^2.7.0 || ^3.5.0"
+  },
   "dependencies": {
-    "express": "^4.22.3",
     "fabric": "6.9.1",
     "jsbarcode": "^3.12.3",
-    "lucide-vue-next": "0.468.0",
-    "mysql2": "^3.24.6",
     "pdf-lib": "^1.17.1",
-    "qrcode": "^1.5.4",
-    "vue": "^3.5.13"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/jsbarcode": "^3.11.4",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "4.6.2",
     "concurrently": "^8.2.2",
+    "express": "^4.22.3",
+    "lucide-vue-next": "0.468.0",
+    "mysql2": "^3.24.6",
     "typescript": "5.4.5",
-    "vite": "4.5.14"
+    "vite": "4.5.14",
+    "vue": "^3.5.13",
+    "vue-tsc": "^2.2.12"
   }
 }

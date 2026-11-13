@@ -1,0 +1,18 @@
+{
+  "name": "doprint-designer-vue2-build",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue2": "2.3.4",
+    "lucide-vue": "0.517.0",
+    "vite": "4.5.14",
+    "vue": "2.7.16"
+  },
+  "dependencies": {
+    "doprint-designer": "file:../.."
+  }
+}

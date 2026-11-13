@@ -33,7 +33,8 @@ import InspectorSection from './ui/InspectorSection.vue'
 import NumField from './ui/NumField.vue'
 import SliderField from './ui/SliderField.vue'
 import { useDesigner } from '../designer/context'
-import type { AlignAction, UpdatePatch } from '../designer/types'
+import type { AlignAction } from '../designer/designer'
+import type { UpdatePatch } from '../designer/types'
 import {
   FONT_OPTIONS,
   GRID_SIZES,
