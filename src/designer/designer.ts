@@ -74,9 +74,14 @@ import {
   renderCodeDataUrl,
   type CodeKind,
 } from './codes'
+// Bundled demo template: also the default document opened on first run.
+import caseTemplateJson from '../../templates/note_temp.json'
 
 const STORAGE_KEY = 'doprint.template.v1'
 const LIBRARY_KEY = 'doprint.templates.v1'
+const CASE_TEMPLATE_ID = 'tpl_case_billing'
+/** Marks that the bundled case template has been offered on this browser. */
+const CASE_TEMPLATE_SEED_KEY = 'doprint.case-template.seeded.v1'
 const RULER_STORAGE_KEY = 'doprint.rulers.visible'
 const HISTORY_LIMIT = 50
 const SNAP_STEP = 1
@@ -915,6 +920,12 @@ export function createDesigner() {
     const sx = anyObj.scaleX ?? 1
     const sy = anyObj.scaleY ?? 1
     if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6) return
+
+    // Images (including QR / barcode bitmaps) must keep their natural pixel
+    // size: Fabric treats a width smaller than the bitmap as a source crop,
+    // so folding the scale into width / height would show only a corner of the
+    // image after a drag or resize. Keep using scaleX / scaleY instead.
+    if (isImageType(typeOf(obj))) return
 
     if (isTextType(typeOf(obj))) {
       anyObj.set({
@@ -3165,6 +3176,37 @@ export function createDesigner() {
     }
   }
 
+  /** Deep-cloned copy so edits never mutate the bundled JSON module. */
+  function cloneCaseTemplate(): PageTemplate {
+    return JSON.parse(JSON.stringify(caseTemplateJson)) as PageTemplate
+  }
+
+  function caseTemplateRecord(): StoredTemplate {
+    const now = Date.now()
+    return {
+      id: CASE_TEMPLATE_ID,
+      template: cloneCaseTemplate(),
+      createdAt: now,
+      updatedAt: now,
+    }
+  }
+
+  function hasSeededCaseTemplate(): boolean {
+    try {
+      return localStorage.getItem(CASE_TEMPLATE_SEED_KEY) === '1'
+    } catch {
+      return false
+    }
+  }
+
+  function markCaseTemplateSeeded() {
+    try {
+      localStorage.setItem(CASE_TEMPLATE_SEED_KEY, '1')
+    } catch {
+      // Best-effort: without the marker the case template is shown again.
+    }
+  }
+
   function nextTemplateName(): string {
     const names = new Set(
       templateRecords.map((record) => record.template.name || '未命名模板'),
@@ -3403,17 +3445,35 @@ export function createDesigner() {
       } catch {
         legacy = null
       }
-      const template = legacy ?? createBlankTemplate('未命名模板')
       const now = Date.now()
-      activeTemplateId = templateId()
-      templateRecords = [
-        {
-          id: activeTemplateId,
-          template,
-          createdAt: now,
-          updatedAt: now,
-        },
-      ]
+      if (legacy) {
+        // Keep an old single-template draft around as its own record.
+        activeTemplateId = templateId()
+        templateRecords = [
+          {
+            id: activeTemplateId,
+            template: legacy,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]
+      } else {
+        // Fresh browser: open the bundled case template by default.
+        activeTemplateId = CASE_TEMPLATE_ID
+        templateRecords = [caseTemplateRecord()]
+      }
+    }
+
+    // Offer the bundled case template once on browsers that already have saved
+    // templates, so updating the project shows it without discarding drafts.
+    if (!hasSeededCaseTemplate()) {
+      let record = templateRecords.find((item) => item.id === CASE_TEMPLATE_ID)
+      if (!record) {
+        record = caseTemplateRecord()
+        templateRecords.unshift(record)
+      }
+      activeTemplateId = record.id
+      markCaseTemplateSeeded()
     }
 
     const active =
