@@ -22,6 +22,19 @@ npm start
 # 打开 http://127.0.0.1:3301
 ```
 
+## 部署到 Vercel / Cloudflare Pages
+
+设计器前端是纯静态的 Vite 应用，可直接部署到 Vercel 或 Cloudflare Pages 做在线预览：
+
+- Vercel：导入仓库，Framework Preset 选择 Vite。仓库已提供 `vercel.json`，构建命令 `npm run build`，输出目录 `dist`
+- Cloudflare Pages：导入仓库，Framework Preset 选择 Vite，构建命令 `npm run build`，输出目录 `dist`；也可以使用 `npx wrangler pages deploy dist` 直接发布，`wrangler.toml` 中的项目名可按需修改
+- 顶栏左上角 DoPrint 标志 / 文字会在新标签页打开官网 https://doprint.top
+
+在线预览限制：
+
+- 模板保存在浏览器 localStorage，不同设备 / 浏览器之间不共享
+- 数据源连接依赖本机 `server/index.mjs` 的 Node 服务和可访问的 MySQL，纯静态部署不可用。线上如需数据库连接，Vercel 需要把 `server/index.mjs` 适配为 Serverless Function 并连接公网数据库；Cloudflare Workers 无法直接使用 `mysql2` 的 TCP 连接，需要 Hyperdrive 或独立 HTTP 后端
+
 ## 模板与参考线
 
 - 顶栏模板名旁的「+」可新建空白模板（A4），下拉箭头打开模板列表，可在多个模板之间切换；每个模板独立自动保存到浏览器 localStorage
@@ -50,7 +63,16 @@ npm start
 
 - 所有元素（文本、图形、图片、表格、线条）都支持旋转：拖动选中框上方的旋转控制点，或在顶栏 `∠` / 右侧「旋转」中输入角度
 - 线条只有左右两个长度控制点，拖拽只会改变长度，不会把线条拉粗；粗细通过顶栏 `粗` 或右侧「粗细」数值定义
+- 矩形与椭圆默认无填充，只显示描边；在右侧「填充」中选色即可加上背景，点「清除」恢复透明
 - 表格旋转后仍可缩放，缩放会以拖动控制点对面的边 / 角为锚点写回真实行高列宽，不会发生跳位
+
+## 版权水印与二维码 / 条形码
+
+- 右侧「属性 → 版权水印」可开启 / 关闭平铺的版权水印，默认文字为 `Doprint预览版`，文字可修改
+- 水印绘制在页面内容之上，随模板保存；开启时会包含在矢量预览、PDF 预览与导出中，关闭后不显示也不导出
+- 左侧工具栏新增「二维码」「条形码」，插入后可在右侧修改内容，支持 `{{字段名}}` 数据绑定
+- 二维码使用 UTF-8 编码；条形码使用 Code128，支持字母、数字和常用符号
+- 两者和其他图片元素一样可以拖拽、缩放、旋转，并保持毫米尺寸
 
 ## 数据源
 

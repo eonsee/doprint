@@ -65,6 +65,11 @@ import {
 import { buildTableObject } from './tableFabric'
 import { drawTableSelection } from './tableOverlay'
 import { createPdfFromImage, previewPixelRatio } from './pdf'
+import {
+  defaultCodeText,
+  renderCodeDataUrl,
+  type CodeKind,
+} from './codes'
 
 const STORAGE_KEY = 'doprint.template.v1'
 const LIBRARY_KEY = 'doprint.templates.v1'
@@ -74,9 +79,14 @@ const SNAP_STEP = 1
 /** Default text size in scene millimetres (14px). */
 const DEFAULT_TEXT_SIZE = DEFAULT_FONT_PX * PX_TO_MM
 const DEFAULT_TEXT_FILL = '#111827'
-const DEFAULT_SHAPE_FILL = '#f3f4f6'
+/** Shapes default to an outline only; fill is opt-in from the inspector. */
+const DEFAULT_SHAPE_FILL = 'transparent'
 const DEFAULT_SHAPE_STROKE = '#374151'
 const DEFAULT_FONT = 'SimSun'
+const DEFAULT_WATERMARK_TEXT = 'Doprint预览版'
+const WATERMARK_COLOR = '#64748b'
+const WATERMARK_OPACITY = 0.1
+const WATERMARK_ANGLE = -30
 
 // Make our element metadata survive cloning / serialization.
 FabricObject.customProperties = [
@@ -85,6 +95,7 @@ FabricObject.customProperties = [
   'name',
   'locked',
   'tableData',
+  'codeText',
 ]
 
 let seq = 0
@@ -136,6 +147,8 @@ export const KIND_LABEL: Record<ElementKind, string> = {
   line: '线条',
   image: '图片',
   table: '表格',
+  qrcode: '二维码',
+  barcode: '条形码',
 }
 
 export type LayerAction = 'up' | 'down' | 'top' | 'bottom'
@@ -179,10 +192,14 @@ function isTableObject(obj: FabricObject): boolean {
 function kindOf(obj: FabricObject): ElementKind {
   if (isTableObject(obj)) return 'table'
   const type = typeOf(obj)
+  const customKind = (obj as any).customKind
+  if (isImageType(type)) {
+    if (customKind === 'qrcode' || customKind === 'barcode') return customKind
+    return 'image'
+  }
   if (isTextType(type)) return 'text'
   if (isEllipseType(type)) return 'ellipse'
-  if (isImageType(type)) return 'image'
-  if (isRectType(type)) return (obj as any).customKind === 'line' ? 'line' : 'rect'
+  if (isRectType(type)) return customKind === 'line' ? 'line' : 'rect'
   return 'rect'
 }
 
@@ -269,6 +286,38 @@ function applyLock(obj: FabricObject, locked: boolean) {
   obj.setCoords()
 }
 
+async function createCodeImage(
+  kind: CodeKind,
+  text: string,
+): Promise<FabricImage> {
+  let src: string
+  try {
+    src = await renderCodeDataUrl(kind, text)
+  } catch (err) {
+    console.warn('code render failed', err)
+    src = await renderCodeDataUrl(kind, defaultCodeText(kind))
+  }
+  const image = await FabricImage.fromURL(src)
+  ;(image as any).codeText = text
+  return image
+}
+
+/**
+ * Fabric treats `width < naturalWidth` as cropping, so images keep their
+ * natural pixel size and use scaleX / scaleY for the millimetre frame.
+ */
+function fitImage(
+  image: FabricImage,
+  width: number,
+  height: number,
+): FabricImage {
+  image.set({
+    scaleX: width / Math.max(1, image.width || 1),
+    scaleY: height / Math.max(1, image.height || 1),
+  } as any)
+  return image
+}
+
 function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -345,6 +394,8 @@ export function createDesigner() {
     marginVisible: true,
     guides: [] as PageGuide[],
     guidesVisible: true,
+    watermarkVisible: true,
+    watermarkText: DEFAULT_WATERMARK_TEXT,
   })
   const grid = reactive({ size: 5, visible: true, snap: true })
   const view = reactive({ zoom: 3.2 })
@@ -510,6 +561,7 @@ export function createDesigner() {
     // only rewrites the reactive selection state.
     c.on('after:render', (event: any) => {
       if (event.ctx !== (c as any).contextContainer) return
+      drawWatermark(event.ctx, view.zoom)
       if (!tableEditing.value || !table.value) return
       const active = c.getActiveObject()
       if (!active || !isTableObject(active)) return
@@ -779,6 +831,96 @@ export function createDesigner() {
     scheduleCommit()
   }
 
+  // ------------------------------------------------------------- watermark
+
+  function watermarkLabel(): string {
+    return page.watermarkText.trim() || DEFAULT_WATERMARK_TEXT
+  }
+
+  function watermarkFontSize(): number {
+    return clamp(round(Math.min(page.width, page.height) * 0.042, 2), 6, 16)
+  }
+
+  /** Diagonal tiles that cover the page; shared by the canvas and exports. */
+  function watermarkTiles(fontSize: number): Array<{ x: number; y: number }> {
+    const text = watermarkLabel()
+    const textWidth = Math.max(24, text.length * fontSize * 1.05)
+    const stepX = Math.max(44, textWidth * 1.35)
+    const stepY = Math.max(34, fontSize * 4.2)
+    const tiles: Array<{ x: number; y: number }> = []
+    let row = 0
+    for (let y = stepY / 2; y < page.height + stepY; y += stepY) {
+      const offset = row % 2 === 0 ? 0 : stepX / 2
+      for (let x = stepX / 2 - offset; x < page.width + stepX; x += stepX) {
+        tiles.push({ x, y })
+      }
+      row += 1
+    }
+    return tiles
+  }
+
+  function drawWatermark(ctx: CanvasRenderingContext2D, zoom: number) {
+    if (!page.watermarkVisible || zoom <= 0) return
+    const text = watermarkLabel()
+    const fontSize = watermarkFontSize()
+    const radians = (WATERMARK_ANGLE * Math.PI) / 180
+    ctx.save()
+    ctx.fillStyle = WATERMARK_COLOR
+    ctx.globalAlpha = WATERMARK_OPACITY
+    ctx.font = `${fontSize}px "${DEFAULT_FONT}", "Microsoft YaHei", sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const tile of watermarkTiles(fontSize)) {
+      ctx.save()
+      ctx.translate(tile.x * zoom, tile.y * zoom)
+      ctx.rotate(radians)
+      ctx.scale(zoom, zoom)
+      ctx.fillText(text, 0, 0)
+      ctx.restore()
+    }
+    ctx.restore()
+  }
+
+  /** Watermark copies added to the throwaway preview canvas for SVG / PDF. */
+  function watermarkObjects(): FabricObject[] {
+    if (!page.watermarkVisible) return []
+    const text = watermarkLabel()
+    const fontSize = watermarkFontSize()
+    const width = Math.max(fontSize * 4, text.length * fontSize * 1.15)
+    return watermarkTiles(fontSize).map(
+      (tile) =>
+        new Textbox(text, {
+          left: tile.x,
+          top: tile.y,
+          originX: 'center',
+          originY: 'center',
+          angle: WATERMARK_ANGLE,
+          width,
+          fontSize,
+          fontFamily: DEFAULT_FONT,
+          fill: WATERMARK_COLOR,
+          opacity: WATERMARK_OPACITY,
+          textAlign: 'center',
+          lineHeight: 1,
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        } as any),
+    )
+  }
+
+  function setWatermarkVisible(visible: boolean) {
+    page.watermarkVisible = visible
+    canvas?.requestRenderAll()
+    scheduleCommit()
+  }
+
+  function setWatermarkText(text: string) {
+    page.watermarkText = String(text ?? '').slice(0, 60)
+    canvas?.requestRenderAll()
+    scheduleCommit()
+  }
+
   function clampGuidePosition(
     orientation: GuideOrientation,
     position: number,
@@ -955,6 +1097,7 @@ export function createDesigner() {
     selection.isImage = kind === 'image'
     selection.isLine = kind === 'line'
     selection.isTable = kind === 'table'
+    selection.isCode = kind === 'qrcode' || kind === 'barcode'
 
     if (single) {
       selection.layout.left = round(first.left ?? 0, 1)
@@ -985,6 +1128,7 @@ export function createDesigner() {
     selection.style.name = first.name || (kind ? KIND_LABEL[kind] : '')
     selection.style.visible = first.visible !== false
 
+    selection.code.content = String(first.codeText ?? '')
     selection.text.content = first.text ?? ''
     selection.text.fontSize = round((first.fontSize ?? 0) * Math.abs(first.scaleY ?? 1), 2)
     selection.text.fontFamily = first.fontFamily || DEFAULT_FONT
@@ -1187,7 +1331,9 @@ export function createDesigner() {
   function decorate(obj: FabricObject, kind: ElementKind, name?: string) {
     const anyObj = obj as any
     anyObj.elementId = uid()
-    if (kind === 'line') anyObj.customKind = 'line'
+    if (kind === 'line' || kind === 'qrcode' || kind === 'barcode') {
+      anyObj.customKind = kind
+    }
     anyObj.name = name || nextName(kind)
     obj.set(CONTROL_STYLE as any)
     if (kind === 'line') configureLineHandles(obj, false)
@@ -1309,13 +1455,8 @@ export function createDesigner() {
         height = 80
         width = height * aspect
       }
-      image.set({
-        ...nextPosition(width, height),
-        width: Math.max(1, round(width, 1)),
-        height: Math.max(1, round(height, 1)),
-        scaleX: 1,
-        scaleY: 1,
-      } as any)
+      fitImage(image, width, height)
+      image.set(nextPosition(width, height) as any)
       decorate(image, 'image')
       commitAdd(image)
     } catch (err) {
@@ -1334,7 +1475,15 @@ export function createDesigner() {
     }
     try {
       const dataUrl = await fileToDataURL(file)
+      const displayWidth =
+        (active.width || 1) * Math.abs(active.scaleX || 1)
+      const displayHeight =
+        (active.height || 1) * Math.abs(active.scaleY || 1)
       await active.setSrc(dataUrl)
+      active.set({
+        scaleX: displayWidth / Math.max(1, active.width || 1),
+        scaleY: displayHeight / Math.max(1, active.height || 1),
+      })
       active.setCoords()
       canvas.requestRenderAll()
       refreshSelection()
@@ -1359,18 +1508,78 @@ export function createDesigner() {
         height = 80
         width = height * aspect
       }
-      image.set({
-        ...nextPosition(width, height),
-        width: Math.max(1, round(width, 1)),
-        height: Math.max(1, round(height, 1)),
-        scaleX: 1,
-        scaleY: 1,
-      } as any)
+      fitImage(image, width, height)
+      image.set(nextPosition(width, height) as any)
       decorate(image, 'image')
       commitAdd(image)
     } catch (err) {
       console.warn(err)
       notify('图片加载失败')
+    }
+  }
+
+  async function addCode(kind: CodeKind) {
+    if (!canvas) return
+    const text = defaultCodeText(kind)
+    try {
+      const width = kind === 'qrcode' ? 30 : 60
+      const height = kind === 'qrcode' ? 30 : 20
+      const image = fitImage(
+        await createCodeImage(kind, text),
+        width,
+        height,
+      )
+      image.set(nextPosition(width, height) as any)
+      decorate(image, kind)
+      commitAdd(image)
+    } catch (err) {
+      console.warn(err)
+      notify(kind === 'qrcode' ? '二维码生成失败' : '条形码生成失败')
+    }
+  }
+
+  function addQrCode() {
+    return addCode('qrcode')
+  }
+
+  function addBarcode() {
+    return addCode('barcode')
+  }
+
+  /** Re-encode the selected QR / barcode after its content changes. */
+  async function updateCodeContent(content: string) {
+    if (!canvas) return
+    const active = canvas.getActiveObject() as any
+    if (!active) return
+    const kind = kindOf(active)
+    if (kind !== 'qrcode' && kind !== 'barcode') return
+    const text = content.trim() ? content : defaultCodeText(kind)
+    if (String(active.codeText ?? '') === text) return
+    try {
+      const src = await renderCodeDataUrl(kind, text)
+      // Keep the frame the user has already positioned / scaled. The natural
+      // pixel size changes with the barcode payload, so recompute the scale.
+      const displayWidth =
+        (active.width || 1) * Math.abs(active.scaleX || 1)
+      const displayHeight =
+        (active.height || 1) * Math.abs(active.scaleY || 1)
+      await active.setSrc(src)
+      active.set({
+        scaleX: displayWidth / Math.max(1, active.width || 1),
+        scaleY: displayHeight / Math.max(1, active.height || 1),
+        codeText: text,
+      })
+      active.setCoords()
+      canvas.requestRenderAll()
+      refreshSelection()
+      scheduleCommit()
+    } catch (err) {
+      console.warn(err)
+      notify(
+        kind === 'qrcode'
+          ? '二维码内容生成失败'
+          : '条形码内容生成失败，请检查内容是否符合 Code128 规范',
+      )
     }
   }
 
@@ -1553,7 +1762,10 @@ export function createDesigner() {
   function applyWidth(obj: any, value: number) {
     const v = Math.max(0.2, value)
     const sx = Math.abs(obj.scaleX || 1)
-    if (isEllipseType(typeOf(obj))) {
+    if (isImageType(typeOf(obj))) {
+      // Images keep natural pixel dimensions; scaling is what changes mm size.
+      obj.set({ scaleX: v / Math.max(1, obj.width || 1) })
+    } else if (isEllipseType(typeOf(obj))) {
       obj.set({ rx: v / 2 / sx })
     } else {
       obj.set({ width: v / sx })
@@ -1563,7 +1775,9 @@ export function createDesigner() {
   function applyHeight(obj: any, value: number) {
     const v = Math.max(0.05, value)
     const sy = Math.abs(obj.scaleY || 1)
-    if (isEllipseType(typeOf(obj))) {
+    if (isImageType(typeOf(obj))) {
+      obj.set({ scaleY: v / Math.max(1, obj.height || 1) })
+    } else if (isEllipseType(typeOf(obj))) {
       obj.set({ ry: v / 2 / sy })
     } else if (isTextType(typeOf(obj))) {
       // text height is derived from wrapping / font size
@@ -1598,7 +1812,9 @@ export function createDesigner() {
       if (patch.visible !== undefined) obj.set('visible', patch.visible)
 
       if (!tableObj) {
-        if (patch.fill !== undefined) obj.set('fill', patch.fill || '')
+        if (patch.fill !== undefined) {
+          obj.set('fill', patch.fill || 'transparent')
+        }
         if (patch.stroke !== undefined) obj.set('stroke', patch.stroke || '')
         if (patch.strokeWidth !== undefined) {
           obj.set('strokeWidth', Math.max(0, patch.strokeWidth))
@@ -2224,6 +2440,8 @@ export function createDesigner() {
         marginVisible: true,
         guides: [],
         guidesVisible: true,
+        watermarkVisible: true,
+        watermarkText: DEFAULT_WATERMARK_TEXT,
       },
       grid: { size: 5, visible: true, snap: true },
       data: [],
@@ -2258,6 +2476,8 @@ export function createDesigner() {
         position: round(guide.position, 1),
       })),
       guidesVisible: page.guidesVisible,
+      watermarkVisible: page.watermarkVisible,
+      watermarkText: page.watermarkText,
     }
   }
 
@@ -2285,7 +2505,12 @@ export function createDesigner() {
     if (isTable) kind = 'table'
     else if (type === 'textbox' || type === 'text' || type === 'itext') kind = 'text'
     else if (type === 'ellipse') kind = 'ellipse'
-    else if (type === 'image') kind = 'image'
+    else if (
+      type === 'image' &&
+      (o.customKind === 'qrcode' || o.customKind === 'barcode')
+    ) {
+      kind = o.customKind
+    } else if (type === 'image') kind = 'image'
     else if (type === 'rect') kind = o.customKind === 'line' ? 'line' : 'rect'
     else return null
 
@@ -2349,6 +2574,10 @@ export function createDesigner() {
 
     if (kind === 'image') {
       element.src = String(o.src || '')
+    }
+
+    if (kind === 'qrcode' || kind === 'barcode') {
+      element.codeText = String(o.codeText || '')
     }
 
     if (kind === 'table' && tableConfig) {
@@ -2496,7 +2725,13 @@ export function createDesigner() {
 
     const finish = (obj: FabricObject) => {
       ;(obj as any).elementId = el.id || uid()
-      if (el.kind === 'line') (obj as any).customKind = 'line'
+      if (
+        el.kind === 'line' ||
+        el.kind === 'qrcode' ||
+        el.kind === 'barcode'
+      ) {
+        ;(obj as any).customKind = el.kind
+      }
       obj.set(CONTROL_STYLE as any)
       applyLock(obj, el.locked === true)
       return obj
@@ -2549,17 +2784,35 @@ export function createDesigner() {
       return Promise.resolve(finish(obj))
     }
 
+    if (el.kind === 'qrcode' || el.kind === 'barcode') {
+      const defaultWidth = el.kind === 'qrcode' ? 30 : 60
+      const defaultHeight = el.kind === 'qrcode' ? 30 : 20
+      return createCodeImage(el.kind, el.codeText || defaultCodeText(el.kind))
+        .then((image) => {
+          fitImage(
+            image,
+            Math.max(4, el.width || defaultWidth),
+            Math.max(4, el.height || defaultHeight),
+          )
+          image.set(common as any)
+          return finish(image)
+        })
+        .catch((err) => {
+          console.warn('code element failed to load', err)
+          return null
+        })
+    }
+
     if (el.kind === 'image') {
       if (!el.src) return Promise.resolve(null)
       return FabricImage.fromURL(el.src)
         .then((image) => {
-          image.set({
-            ...common,
-            width: Math.max(1, el.width || 40),
-            height: Math.max(1, el.height || 40),
-            scaleX: 1,
-            scaleY: 1,
-          } as any)
+          fitImage(
+            image,
+            Math.max(1, el.width || 40),
+            Math.max(1, el.height || 40),
+          )
+          image.set(common as any)
           return finish(image)
         })
         .catch((err) => {
@@ -2602,6 +2855,12 @@ export function createDesigner() {
       page.marginVisible = template.page?.marginVisible !== false
       page.guides = readGuides(template.page?.guides, page.width, page.height)
       page.guidesVisible = template.page?.guidesVisible !== false
+      page.watermarkVisible = template.page?.watermarkVisible !== false
+      page.watermarkText =
+        typeof template.page?.watermarkText === 'string' &&
+        template.page.watermarkText.trim()
+          ? template.page.watermarkText
+          : DEFAULT_WATERMARK_TEXT
       grid.size = template.grid?.size ?? 5
       grid.visible = template.grid?.visible ?? true
       grid.snap = template.grid?.snap ?? true
@@ -2713,6 +2972,8 @@ export function createDesigner() {
     })
     const valid = objects.filter(Boolean) as FabricObject[]
     if (valid.length) temp.add(...valid)
+    const watermark = watermarkObjects()
+    if (watermark.length) temp.add(...watermark)
     return temp
   }
 
@@ -2803,6 +3064,8 @@ export function createDesigner() {
     setPageSize,
     setPageMargin,
     setPageMarginVisible,
+    setWatermarkVisible,
+    setWatermarkText,
     setGuidesVisible,
     addGuide,
     moveGuide,
@@ -2823,6 +3086,8 @@ export function createDesigner() {
     addTable,
     addImageFile,
     addImageFromSrc,
+    addQrCode,
+    addBarcode,
     replaceSelectedImage,
     // table
     beginTableEdit,
@@ -2849,6 +3114,7 @@ export function createDesigner() {
     importDataFields,
     // editing
     updateSelected,
+    updateCodeContent,
     applyGlobalTextStyle,
     deleteSelected,
     duplicateSelected,

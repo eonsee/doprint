@@ -76,6 +76,7 @@ const strokeStyle = computed<'solid' | 'dashed' | 'dotted'>(() => {
 
 const imageInput = ref<HTMLInputElement>()
 const textarea = ref<HTMLTextAreaElement>()
+const codeTextarea = ref<HTMLTextAreaElement>()
 
 function update(patch: UpdatePatch) {
   designer.updateSelected(patch)
@@ -169,6 +170,33 @@ function onPageMargin(side: 'top' | 'right' | 'bottom' | 'left', value: number) 
 
 function onMarginVisible(event: Event) {
   designer.setPageMarginVisible((event.target as HTMLInputElement).checked)
+}
+
+function onWatermarkVisible(event: Event) {
+  designer.setWatermarkVisible((event.target as HTMLInputElement).checked)
+}
+
+function onWatermarkText(event: Event) {
+  designer.setWatermarkText((event.target as HTMLInputElement).value)
+}
+
+function onCodeContent(event: Event) {
+  void designer.updateCodeContent((event.target as HTMLTextAreaElement).value)
+}
+
+function insertCodeBinding(key: string) {
+  const token = `{{${key}}}`
+  const current = selection.code.content
+  const el = codeTextarea.value
+  const start = el?.selectionStart ?? current.length
+  const end = el?.selectionEnd ?? current.length
+  const next = current.slice(0, start) + token + current.slice(end)
+  void designer.updateCodeContent(next)
+  void nextTick(() => {
+    el?.focus()
+    const caret = start + token.length
+    el?.setSelectionRange(caret, caret)
+  })
 }
 
 function onRulersVisible(event: Event) {
@@ -317,6 +345,31 @@ function align(action: AlignAction) {
         </label>
         <p class="field-note">
           内容区 {{ contentWidth }} × {{ contentHeight }} mm，虚线框只用于设计参考，不会打印。
+        </p>
+      </InspectorSection>
+
+      <InspectorSection title="版权水印">
+        <label class="switch-row">
+          <span>显示版权水印</span>
+          <input
+            class="switch"
+            type="checkbox"
+            :checked="page.watermarkVisible"
+            @change="onWatermarkVisible"
+          />
+        </label>
+        <label class="select-field compact">
+          <span>水印文字</span>
+          <input
+            type="text"
+            maxlength="60"
+            :value="page.watermarkText"
+            :disabled="!page.watermarkVisible"
+            @change="onWatermarkText"
+          />
+        </label>
+        <p class="field-note">
+          水印会以浅灰色平铺在页面内容之上，并包含在 SVG / PDF 预览中；关闭后不显示也不导出。
         </p>
       </InspectorSection>
 
@@ -559,7 +612,7 @@ function align(action: AlignAction) {
       </InspectorSection>
 
       <InspectorSection
-        v-if="!isMulti && !selection.isImage && !selection.isTable"
+        v-if="!isMulti && !selection.isImage && !selection.isTable && !selection.isCode"
         title="外观"
       >
         <ColorField
@@ -571,6 +624,7 @@ function align(action: AlignAction) {
                 : '填充'
           "
           palette
+          :clearable="selection.isShape"
           :model-value="selection.style.fill"
           @update:model-value="update({ fill: $event })"
         />
@@ -624,7 +678,29 @@ function align(action: AlignAction) {
               </button>
             </div>
           </div>
+          <p class="field-note">
+            填充留空时只显示描边，不会遮挡下方内容。
+          </p>
         </template>
+      </InspectorSection>
+
+      <InspectorSection
+        v-if="!isMulti && selection.isCode"
+        :title="selection.kind === 'qrcode' ? '二维码内容' : '条形码内容'"
+      >
+        <textarea
+          ref="codeTextarea"
+          class="text-content"
+          rows="2"
+          :value="selection.code.content"
+          placeholder="输入二维码 / 条形码内容"
+          @change="onCodeContent"
+        ></textarea>
+        <BindingPicker :fields="dataFields" @insert="insertCodeBinding" />
+        <p class="field-note" v-pre>
+          修改后失焦生效；二维码支持任意文字，条形码使用 Code128（字母、数字和常用符号）。
+          可用 {{字段名}} 绑定示例数据，预览和导出时自动替换。
+        </p>
       </InspectorSection>
 
       <InspectorSection v-if="!isMulti && selection.isImage" title="图片">

@@ -1,0 +1,4 @@
+# Cloudflare Pages direct deployment.
+# The project name can be changed to match the Pages project in the dashboard.
+name = "doprint"
+pages_build_output_dir = "dist"

@@ -5,6 +5,8 @@ export type ElementKind =
   | 'line'
   | 'image'
   | 'table'
+  | 'qrcode'
+  | 'barcode'
 
 export type TableAlign = 'left' | 'center' | 'right'
 export type TableVAlign = 'top' | 'middle' | 'bottom'
@@ -152,6 +154,8 @@ export interface TemplateElement {
   textBackground?: string
   /** data url */
   src?: string
+  /** QR / barcode payload; may contain {{dataField}} placeholders */
+  codeText?: string
   /** table layout and cell data */
   table?: TableConfig
 }
@@ -194,6 +198,9 @@ export interface PageTemplate {
     guides?: PageGuide[]
     /** whether the ruler guides are shown */
     guidesVisible?: boolean
+    /** repeated copyright watermark across the page */
+    watermarkVisible?: boolean
+    watermarkText?: string
   }
   grid: { size: number; visible: boolean; snap: boolean }
   /** sample data used for binding preview */
@@ -219,6 +226,7 @@ export interface SelectionState {
   isImage: boolean
   isLine: boolean
   isTable: boolean
+  isCode: boolean
   layout: {
     left: number
     top: number
@@ -237,6 +245,9 @@ export interface SelectionState {
     radius: number
     name: string
     visible: boolean
+  }
+  code: {
+    content: string
   }
   text: {
     content: string
@@ -293,6 +304,7 @@ export function emptySelection(): SelectionState {
     isImage: false,
     isLine: false,
     isTable: false,
+    isCode: false,
     layout: {
       left: 0,
       top: 0,
@@ -310,6 +322,9 @@ export function emptySelection(): SelectionState {
       radius: 0,
       name: '',
       visible: true,
+    },
+    code: {
+      content: '',
     },
     text: {
       content: '',

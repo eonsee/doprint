@@ -86,6 +86,12 @@ export function resolveTemplateBindings(
     if (typeof element.text === 'string') {
       element.text = resolveBindings(element.text, fields)
     }
+    if (
+      (element.kind === 'qrcode' || element.kind === 'barcode') &&
+      typeof element.codeText === 'string'
+    ) {
+      element.codeText = resolveBindings(element.codeText, fields)
+    }
     if (element.table) {
       // Cells are sparse (row -> column -> { v, s }), so only non-empty
       // values are visited.

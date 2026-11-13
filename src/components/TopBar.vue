@@ -126,10 +126,16 @@ async function onFileChange(event: Event) {
 <template>
   <header class="topbar">
     <div class="topbar-main">
-      <div class="brand">
+      <a
+        class="brand"
+        href="https://doprint.top"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="访问 DoPrint 官网（新标签页）"
+      >
         <span class="brand-mark">D</span>
         <span class="brand-name">DoPrint <span class="brand-sub">设计器</span></span>
-      </div>
+      </a>
 
       <div class="topbar-divider"></div>
 

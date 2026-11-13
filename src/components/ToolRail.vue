@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Circle, ImagePlus, Minus, Square, Table, Type } from 'lucide-vue-next'
+import {
+  Barcode,
+  Circle,
+  ImagePlus,
+  Minus,
+  QrCode,
+  Square,
+  Table,
+  Type,
+} from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
 
 const designer = useDesigner()
@@ -45,6 +54,14 @@ async function onFileChange(event: Event) {
     <button class="tool" title="添加图片" @click="pickImage">
       <ImagePlus :size="20" />
       <span>图片</span>
+    </button>
+    <button class="tool" title="添加二维码" @click="designer.addQrCode()">
+      <QrCode :size="20" />
+      <span>二维码</span>
+    </button>
+    <button class="tool" title="添加条形码" @click="designer.addBarcode()">
+      <Barcode :size="20" />
+      <span>条形码</span>
     </button>
 
     <input
