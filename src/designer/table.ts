@@ -89,6 +89,11 @@ export function sanitizeCell(input: unknown, row = 1): TableCell {
   if (raw.bold === true) cell.bold = true
   if (typeof raw.fill === 'string' && raw.fill) cell.fill = raw.fill
   if (typeof raw.color === 'string' && raw.color) cell.color = raw.color
+  // Store only hidden sides: a missing flag means the border is visible.
+  if (raw.borderTop === false) cell.borderTop = false
+  if (raw.borderRight === false) cell.borderRight = false
+  if (raw.borderBottom === false) cell.borderBottom = false
+  if (raw.borderLeft === false) cell.borderLeft = false
   // Normalise an entirely empty cell to a fresh default.
   if (!Object.keys(cell).length) {
     return row === 0
@@ -426,6 +431,164 @@ export function updateCells(
       next.cells[row][col] = sanitizeCell(merged, row)
     }
   }
+  return next
+}
+
+export type TableBorderSide = 'top' | 'right' | 'bottom' | 'left'
+
+const BORDER_FLAG: Record<
+  TableBorderSide,
+  'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft'
+> = {
+  top: 'borderTop',
+  right: 'borderRight',
+  bottom: 'borderBottom',
+  left: 'borderLeft',
+}
+
+const OPPOSITE_SIDE: Record<TableBorderSide, TableBorderSide> = {
+  top: 'bottom',
+  right: 'left',
+  bottom: 'top',
+  left: 'right',
+}
+
+export function cellBorderVisible(
+  cell: TableCell | undefined,
+  side: TableBorderSide,
+): boolean {
+  return cell?.[BORDER_FLAG[side]] !== false
+}
+
+/** Map every grid coordinate to the visible region that owns it. */
+function regionLookup(config: TableConfig): Map<string, TableRegion> {
+  const lookup = new Map<string, TableRegion>()
+  for (const region of buildRegions(config)) {
+    for (let row = region.row; row < region.row + region.rowSpan; row += 1) {
+      for (let col = region.col; col < region.col + region.colSpan; col += 1) {
+        lookup.set(`${row},${col}`, region)
+      }
+    }
+  }
+  return lookup
+}
+
+function regionCell(
+  config: TableConfig,
+  region: TableRegion,
+): TableCell | undefined {
+  return config.cells[region.row]?.[region.col]
+}
+
+/**
+ * Whether each side of the selected range is fully visible. Shared internal
+ * edges count as visible only when both neighbouring cells show their side.
+ */
+export function rangeBorderState(
+  config: TableConfig,
+  range: TableRange,
+): Record<TableBorderSide, boolean> {
+  const expanded = expandRangeToMerges(config, range)
+  const lookup = regionLookup(config)
+  const state: Record<TableBorderSide, boolean> = {
+    top: true,
+    right: true,
+    bottom: true,
+    left: true,
+  }
+  const sideOn = (region: TableRegion | undefined, side: TableBorderSide) =>
+    !region || cellBorderVisible(regionCell(config, region), side)
+
+  for (let row = expanded.row; row <= expanded.endRow; row += 1) {
+    const leftInside = lookup.get(`${row},${expanded.col}`)
+    const leftOutside =
+      expanded.col > 0 ? lookup.get(`${row},${expanded.col - 1}`) : undefined
+    if (!sideOn(leftInside, 'left') || !sideOn(leftOutside, 'right')) {
+      state.left = false
+    }
+
+    const rightInside = lookup.get(`${row},${expanded.endCol}`)
+    const rightOutside =
+      expanded.endCol < config.cols - 1
+        ? lookup.get(`${row},${expanded.endCol + 1}`)
+        : undefined
+    if (!sideOn(rightInside, 'right') || !sideOn(rightOutside, 'left')) {
+      state.right = false
+    }
+  }
+
+  for (let col = expanded.col; col <= expanded.endCol; col += 1) {
+    const topInside = lookup.get(`${expanded.row},${col}`)
+    const topOutside =
+      expanded.row > 0 ? lookup.get(`${expanded.row - 1},${col}`) : undefined
+    if (!sideOn(topInside, 'top') || !sideOn(topOutside, 'bottom')) {
+      state.top = false
+    }
+
+    const bottomInside = lookup.get(`${expanded.endRow},${col}`)
+    const bottomOutside =
+      expanded.endRow < config.rows - 1
+        ? lookup.get(`${expanded.endRow + 1},${col}`)
+        : undefined
+    if (!sideOn(bottomInside, 'bottom') || !sideOn(bottomOutside, 'top')) {
+      state.bottom = false
+    }
+  }
+
+  return state
+}
+
+/**
+ * Show or hide one outer side of a selected range. Hiding marks the selected
+ * cells only; showing also clears the opposite flag on the neighbouring cells
+ * outside the range so the shared edge reappears.
+ */
+export function setRangeBorder(
+  config: TableConfig,
+  range: TableRange,
+  side: TableBorderSide,
+  visible: boolean,
+): TableConfig {
+  const expanded = expandRangeToMerges(config, range)
+  const next = cloneTableConfig(config)
+  const lookup = regionLookup(next)
+  const opposite = OPPOSITE_SIDE[side]
+
+  const apply = (
+    region: TableRegion | undefined,
+    target: TableBorderSide,
+    on: boolean,
+  ) => {
+    if (!region) return
+    const cell = next.cells[region.row]?.[region.col]
+    if (!cell) return
+    const flag = BORDER_FLAG[target]
+    if (on) delete cell[flag]
+    else cell[flag] = false
+  }
+
+  if (side === 'top' || side === 'bottom') {
+    const insideRow = side === 'top' ? expanded.row : expanded.endRow
+    const outsideRow = side === 'top' ? expanded.row - 1 : expanded.endRow + 1
+    const hasOutside = outsideRow >= 0 && outsideRow < next.rows
+    for (let col = expanded.col; col <= expanded.endCol; col += 1) {
+      apply(lookup.get(`${insideRow},${col}`), side, visible)
+      if (visible && hasOutside) {
+        apply(lookup.get(`${outsideRow},${col}`), opposite, true)
+      }
+    }
+  } else {
+    const insideCol = side === 'left' ? expanded.col : expanded.endCol
+    const outsideCol = side === 'left' ? expanded.col - 1 : expanded.endCol + 1
+    const hasOutside = outsideCol >= 0 && outsideCol < next.cols
+    for (let row = expanded.row; row <= expanded.endRow; row += 1) {
+      apply(lookup.get(`${row},${insideCol}`), side, visible)
+      if (visible && hasOutside) {
+        apply(lookup.get(`${row},${outsideCol}`), opposite, true)
+      }
+    }
+  }
+
   return next
 }
 

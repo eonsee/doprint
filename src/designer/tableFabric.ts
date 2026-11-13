@@ -1,7 +1,13 @@
 import { Group, Rect, Textbox } from 'fabric'
 import type { FabricObject } from 'fabric'
 import type { TableConfig } from './types'
-import { buildRegions, getTableHeight, getTableWidth } from './table'
+import {
+  buildRegions,
+  cellBorderVisible,
+  getTableHeight,
+  getTableWidth,
+  type TableBorderSide,
+} from './table'
 import { clamp } from './units'
 
 function solidRect(
@@ -57,87 +63,91 @@ export function buildTableObject(config: TableConfig): Group {
   // the group's bounding box and shift the element's reported position.
   if (bw > 0) {
     const color = config.borderColor || '#4b5563'
-    children.push(solidRect(0, 0, width, bw, color))
-    children.push(solidRect(0, height - bw, width, bw, color))
-    children.push(solidRect(0, 0, bw, height, color))
-    children.push(solidRect(width - bw, 0, bw, height, color))
-
-    for (let row = 1; row < config.rows; row += 1) {
-      const y = config.rowHeights
-        .slice(0, row)
-        .reduce((sum, value) => sum + value, 0)
-      let segmentStart: number | null = null
-      let segmentWidth = 0
-      let x = 0
-      for (let col = 0; col < config.cols; col += 1) {
-        const colWidth = config.colWidths[col]
-        const spanned = config.merges.some(
-          (merge) =>
-            merge.col <= col &&
-            col < merge.col + merge.colSpan &&
-            merge.row < row &&
-            row < merge.row + merge.rowSpan,
-        )
-        if (spanned) {
-          if (segmentStart !== null) {
-            children.push(
-              solidRect(
-                segmentStart,
-                y - bw / 2,
-                segmentWidth,
-                bw,
-                color,
-              ),
-            )
-            segmentStart = null
-            segmentWidth = 0
-          }
-        } else {
-          if (segmentStart === null) segmentStart = x
-          segmentWidth += colWidth
+    // Every grid coordinate points at its visible region so merged cells can
+    // share one set of border flags on their anchor cell.
+    const regionAt = new Map<string, (typeof regions)[number]>()
+    for (const region of regions) {
+      for (let row = region.row; row < region.row + region.rowSpan; row += 1) {
+        for (let col = region.col; col < region.col + region.colSpan; col += 1) {
+          regionAt.set(`${row},${col}`, region)
         }
-        x += colWidth
       }
-      if (segmentStart !== null) {
+    }
+    const cellOf = (region: (typeof regions)[number]) =>
+      config.cells[region.row]?.[region.col]
+    const sideOn = (
+      region: (typeof regions)[number] | undefined,
+      side: TableBorderSide,
+    ) => !region || cellBorderVisible(cellOf(region), side)
+
+    // Outer edges are drawn per region so each side can be hidden on its own.
+    for (const region of regions) {
+      if (region.row === 0 && sideOn(region, 'top')) {
+        children.push(solidRect(region.x, 0, region.width, bw, color))
+      }
+      if (
+        region.row + region.rowSpan === config.rows &&
+        sideOn(region, 'bottom')
+      ) {
         children.push(
-          solidRect(segmentStart, y - bw / 2, segmentWidth, bw, color),
+          solidRect(region.x, height - bw, region.width, bw, color),
+        )
+      }
+      if (region.col === 0 && sideOn(region, 'left')) {
+        children.push(solidRect(0, region.y, bw, region.height, color))
+      }
+      if (
+        region.col + region.colSpan === config.cols &&
+        sideOn(region, 'right')
+      ) {
+        children.push(
+          solidRect(width - bw, region.y, bw, region.height, color),
+        )
+      }
+    }
+
+    const xs = [0]
+    for (const colWidth of config.colWidths) {
+      xs.push(xs[xs.length - 1] + colWidth)
+    }
+    const ys = [0]
+    for (const rowHeight of config.rowHeights) {
+      ys.push(ys[ys.length - 1] + rowHeight)
+    }
+
+    // Internal edges show only when both neighbouring cells show their side.
+    for (let row = 1; row < config.rows; row += 1) {
+      for (let col = 0; col < config.cols; col += 1) {
+        const above = regionAt.get(`${row - 1},${col}`)
+        const below = regionAt.get(`${row},${col}`)
+        if (!above || !below || above === below) continue
+        if (!sideOn(above, 'bottom') || !sideOn(below, 'top')) continue
+        children.push(
+          solidRect(
+            xs[col],
+            ys[row] - bw / 2,
+            config.colWidths[col],
+            bw,
+            color,
+          ),
         )
       }
     }
 
     for (let col = 1; col < config.cols; col += 1) {
-      const x = config.colWidths
-        .slice(0, col)
-        .reduce((sum, value) => sum + value, 0)
-      let segmentStart: number | null = null
-      let segmentHeight = 0
-      let y = 0
       for (let row = 0; row < config.rows; row += 1) {
-        const rowHeight = config.rowHeights[row]
-        const spanned = config.merges.some(
-          (merge) =>
-            merge.row <= row &&
-            row < merge.row + merge.rowSpan &&
-            merge.col < col &&
-            col < merge.col + merge.colSpan,
-        )
-        if (spanned) {
-          if (segmentStart !== null) {
-            children.push(
-              solidRect(x - bw / 2, segmentStart, bw, segmentHeight, color),
-            )
-            segmentStart = null
-            segmentHeight = 0
-          }
-        } else {
-          if (segmentStart === null) segmentStart = y
-          segmentHeight += rowHeight
-        }
-        y += rowHeight
-      }
-      if (segmentStart !== null) {
+        const left = regionAt.get(`${row},${col - 1}`)
+        const right = regionAt.get(`${row},${col}`)
+        if (!left || !right || left === right) continue
+        if (!sideOn(left, 'right') || !sideOn(right, 'left')) continue
         children.push(
-          solidRect(x - bw / 2, segmentStart, bw, segmentHeight, color),
+          solidRect(
+            xs[col] - bw / 2,
+            ys[row],
+            bw,
+            config.rowHeights[row],
+            color,
+          ),
         )
       }
     }

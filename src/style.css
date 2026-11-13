@@ -1565,6 +1565,82 @@ button:disabled {
   -webkit-user-select: none;
 }
 
+.cte-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  outline: 1px solid rgba(37, 99, 235, 0.55);
+  pointer-events: none;
+}
+
+.cte-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.cte-handle.dir-nw {
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  cursor: nwse-resize;
+}
+
+.cte-handle.dir-n {
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  cursor: ns-resize;
+}
+
+.cte-handle.dir-ne {
+  top: 0;
+  right: 0;
+  transform: translate(50%, -50%);
+  cursor: nesw-resize;
+}
+
+.cte-handle.dir-e {
+  top: 50%;
+  right: 0;
+  transform: translate(50%, -50%);
+  cursor: ew-resize;
+}
+
+.cte-handle.dir-se {
+  right: 0;
+  bottom: 0;
+  transform: translate(50%, 50%);
+  cursor: nwse-resize;
+}
+
+.cte-handle.dir-s {
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, 50%);
+  cursor: ns-resize;
+}
+
+.cte-handle.dir-sw {
+  bottom: 0;
+  left: 0;
+  transform: translate(-50%, 50%);
+  cursor: nesw-resize;
+}
+
+.cte-handle.dir-w {
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  cursor: ew-resize;
+}
+
 .cte-cell {
   position: absolute;
   cursor: cell;

@@ -7,6 +7,10 @@ import {
   Bold,
   Check,
   Merge,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
   Pencil,
   Split,
 } from 'lucide-vue-next'
@@ -40,6 +44,7 @@ const {
   tableSelectionCount,
   tableCanMerge,
   tableCanSplit,
+  tableBorderState,
   dataFields,
 } = designer
 
@@ -292,7 +297,8 @@ function toggleCanvasEditing() {
       </div>
       <p class="field-note">
         双击画布上的表格可直接框选、合并、拆分和输入内容；按住 Shift
-        点击可扩展选区。合并或拆分都会保留左上角内容。
+        点击可扩展选区。拖动选区边框上的 8 个控制点可缩放整张表格（角点按
+        Shift 等比缩放），工具栏按钮可显示或隐藏选区四边边框。
       </p>
     </InspectorSection>
 
@@ -373,6 +379,40 @@ function toggleCanvasEditing() {
             @click="toggleBold"
           >
             <Bold :size="15" />
+          </button>
+        </div>
+      </div>
+
+      <div class="inline-row">
+        <span>选区边框</span>
+        <div class="segmented">
+          <button
+            :title="tableBorderState.top ? '隐藏上边框' : '显示上边框'"
+            :class="{ active: tableBorderState.top }"
+            @click="designer.toggleTableBorder('top')"
+          >
+            <PanelTop :size="15" />
+          </button>
+          <button
+            :title="tableBorderState.right ? '隐藏右边框' : '显示右边框'"
+            :class="{ active: tableBorderState.right }"
+            @click="designer.toggleTableBorder('right')"
+          >
+            <PanelRight :size="15" />
+          </button>
+          <button
+            :title="tableBorderState.bottom ? '隐藏下边框' : '显示下边框'"
+            :class="{ active: tableBorderState.bottom }"
+            @click="designer.toggleTableBorder('bottom')"
+          >
+            <PanelBottom :size="15" />
+          </button>
+          <button
+            :title="tableBorderState.left ? '隐藏左边框' : '显示左边框'"
+            :class="{ active: tableBorderState.left }"
+            @click="designer.toggleTableBorder('left')"
+          >
+            <PanelLeft :size="15" />
           </button>
         </div>
       </div>

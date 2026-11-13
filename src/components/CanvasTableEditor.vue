@@ -17,6 +17,10 @@ import {
   Bold,
   Check,
   Merge,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
   Split,
 } from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
@@ -24,13 +28,15 @@ import {
   buildRegions,
   cellAt,
   cellAtPoint,
+  cloneTableConfig,
   regionAtCell,
   type TableAlign,
   type TableCell,
   type TableRegion,
   type TableVAlign,
 } from '../designer/table'
-import { clamp } from '../designer/units'
+import type { TableConfig } from '../designer/types'
+import { clamp, round } from '../designer/units'
 
 const designer = useDesigner()
 const {
@@ -43,6 +49,7 @@ const {
   tableSelectionCount,
   tableCanMerge,
   tableCanSplit,
+  tableBorderState,
   view,
   page,
 } = designer
@@ -265,6 +272,139 @@ function cellPointFromEvent(event: PointerEvent) {
   return cellAtPoint(table.value, x, y)
 }
 
+// ------------------------------------------------- table resize handles
+
+type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+const RESIZE_HANDLES: ResizeDir[] = [
+  'nw',
+  'n',
+  'ne',
+  'e',
+  'se',
+  's',
+  'sw',
+  'w',
+]
+
+interface ResizeState {
+  dir: ResizeDir
+  startX: number
+  startY: number
+  startW: number
+  startH: number
+  startLeft: number
+  startTop: number
+  /** Config snapshot so repeated frames scale from the same baseline. */
+  base: TableConfig
+}
+
+let resizeState: ResizeState | null = null
+let resizePointer: { x: number; y: number; shift: boolean } | null = null
+let resizeRaf = 0
+
+function startResize(dir: ResizeDir, event: PointerEvent) {
+  if (event.button !== 0 || !table.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (editing.value) commitEditor()
+  const config = table.value
+  if (!config) return
+  resizeState = {
+    dir,
+    startX: event.clientX,
+    startY: event.clientY,
+    startW: tableFrame.width,
+    startH: tableFrame.height,
+    startLeft: tableFrame.left,
+    startTop: tableFrame.top,
+    base: cloneTableConfig(config),
+  }
+  resizePointer = { x: event.clientX, y: event.clientY, shift: event.shiftKey }
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', endResize)
+  window.addEventListener('pointercancel', endResize)
+}
+
+function onResizeMove(event: PointerEvent) {
+  if (!resizeState) return
+  resizePointer = { x: event.clientX, y: event.clientY, shift: event.shiftKey }
+  if (!resizeRaf) resizeRaf = requestAnimationFrame(applyResize)
+}
+
+function applyResize() {
+  resizeRaf = 0
+  const state = resizeState
+  const pointer = resizePointer
+  const config = table.value
+  if (!state || !pointer || !config) return
+
+  const dx = (pointer.x - state.startX) / view.zoom
+  const dy = (pointer.y - state.startY) / view.zoom
+  const hasE = state.dir.includes('e')
+  const hasW = state.dir.includes('w')
+  const hasS = state.dir.includes('s')
+  const hasN = state.dir.includes('n')
+
+  // Keep every row / column at or above the 0.5 mm floor used by the config.
+  const minWidth = Math.max(2, 0.5 * config.cols)
+  const minHeight = Math.max(1, 0.5 * config.rows)
+
+  let width = hasW ? state.startW - dx : hasE ? state.startW + dx : state.startW
+  let height = hasN ? state.startH - dy : hasS ? state.startH + dy : state.startH
+
+  const isCorner = (hasE || hasW) && (hasN || hasS)
+  if (isCorner && pointer.shift) {
+    // Proportional corner scaling: follow the axis that moved the most.
+    const sx = width / state.startW
+    const sy = height / state.startH
+    let scale = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy
+    scale = Math.max(scale, minWidth / state.startW, minHeight / state.startH)
+    width = state.startW * scale
+    height = state.startH * scale
+  }
+
+  width = Math.max(minWidth, width)
+  height = Math.max(minHeight, height)
+  // Dragging a left / top handle keeps the opposite edge anchored.
+  const left = hasW
+    ? round(state.startLeft + state.startW - width, 2)
+    : undefined
+  const top = hasN
+    ? round(state.startTop + state.startH - height, 2)
+    : undefined
+
+  if (
+    Math.abs(width - tableFrame.width) < 0.01 &&
+    Math.abs(height - tableFrame.height) < 0.01 &&
+    (left === undefined || Math.abs(left - tableFrame.left) < 0.01) &&
+    (top === undefined || Math.abs(top - tableFrame.top) < 0.01)
+  ) {
+    return
+  }
+
+  designer.resizeTableFrom(
+    state.base,
+    round(width, 2),
+    round(height, 2),
+    left,
+    top,
+  )
+}
+
+function endResize() {
+  if (resizeRaf) {
+    cancelAnimationFrame(resizeRaf)
+    resizeRaf = 0
+  }
+  if (resizeState) applyResize()
+  resizeState = null
+  resizePointer = null
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', endResize)
+  window.removeEventListener('pointercancel', endResize)
+}
+
 function stepSelection(dRow: number, dCol: number, extend = false) {
   const config = table.value
   if (!config) return
@@ -415,6 +555,7 @@ watch(tableEditing, (active) => {
   if (!active) {
     editing.value = null
     endDrag()
+    endResize()
     return
   }
   if (!requestedCellEdit.value) focusOverlay()
@@ -428,6 +569,7 @@ watch(requestedCellEdit, (request) => {
 
 onBeforeUnmount(() => {
   endDrag()
+  endResize()
   window.removeEventListener('pointerdown', onDocumentPointerDown, true)
 })
 </script>
@@ -467,6 +609,16 @@ onBeforeUnmount(() => {
       @keydown.esc.prevent.stop="cancelEditor"
       @keydown.tab.prevent.stop="commitEditor($event.shiftKey ? 'prev' : 'next')"
     ></textarea>
+
+    <div v-if="!editing" class="cte-frame">
+      <span
+        v-for="dir in RESIZE_HANDLES"
+        :key="dir"
+        class="cte-handle"
+        :class="`dir-${dir}`"
+        @pointerdown="startResize(dir, $event)"
+      ></span>
+    </div>
 
     <div class="cte-toolbar" :style="toolbarStyle" @mousedown="onToolbarPointerDown">
       <button
@@ -553,6 +705,43 @@ onBeforeUnmount(() => {
         @click="toggleBold"
       >
         <Bold :size="15" />
+      </button>
+      <span class="cte-sep"></span>
+      <button
+        type="button"
+        class="cte-btn icon"
+        :title="tableBorderState.top ? '隐藏上边框' : '显示上边框'"
+        :class="{ active: tableBorderState.top }"
+        @click="designer.toggleTableBorder('top')"
+      >
+        <PanelTop :size="15" />
+      </button>
+      <button
+        type="button"
+        class="cte-btn icon"
+        :title="tableBorderState.right ? '隐藏右边框' : '显示右边框'"
+        :class="{ active: tableBorderState.right }"
+        @click="designer.toggleTableBorder('right')"
+      >
+        <PanelRight :size="15" />
+      </button>
+      <button
+        type="button"
+        class="cte-btn icon"
+        :title="tableBorderState.bottom ? '隐藏下边框' : '显示下边框'"
+        :class="{ active: tableBorderState.bottom }"
+        @click="designer.toggleTableBorder('bottom')"
+      >
+        <PanelBottom :size="15" />
+      </button>
+      <button
+        type="button"
+        class="cte-btn icon"
+        :title="tableBorderState.left ? '隐藏左边框' : '显示左边框'"
+        :class="{ active: tableBorderState.left }"
+        @click="designer.toggleTableBorder('left')"
+      >
+        <PanelLeft :size="15" />
       </button>
       <span class="cte-sep"></span>
       <span class="cte-range">{{ tableRangeLabel }} · {{ tableSelectionCount }}</span>

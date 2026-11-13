@@ -44,14 +44,17 @@ import {
   hasMergeInRange,
   mergeRegion,
   normalizeTableConfig,
+  rangeBorderState,
   rangeCellCount,
   rangeLabel,
   regionAtCell,
   resizeTable,
+  setRangeBorder,
   setTableHeight,
   setTableWidth,
   splitRegion,
   updateCells,
+  type TableBorderSide,
   type TableRange,
 } from './table'
 import { buildTableObject } from './tableFabric'
@@ -1283,6 +1286,12 @@ export function createDesigner() {
     return hasMergeInRange(table.value, tableExpandedRange.value)
   })
 
+  const tableBorderState = computed(() =>
+    table.value
+      ? rangeBorderState(table.value, tableSelection)
+      : { top: true, right: true, bottom: true, left: true },
+  )
+
   function clampTableSelection(config: TableConfig) {
     // Anchor and end may be in any order: a shift-click can select upwards or
     // leftwards, so each coordinate is clamped independently.
@@ -1292,7 +1301,11 @@ export function createDesigner() {
     tableSelection.endCol = clamp(tableSelection.endCol, 0, config.cols - 1)
   }
 
-  function commitTableConfig(next: TableConfig) {
+  function commitTableConfig(
+    next: TableConfig,
+    placement?: { left?: number; top?: number },
+    live = false,
+  ) {
     if (!canvas) return
     const active = canvas.getActiveObject() as FabricObject | null
     if (!active || !isTableObject(active)) return
@@ -1302,8 +1315,8 @@ export function createDesigner() {
     const preservedId = String(old.elementId || (group as any).elementId || '')
     const index = canvas.getObjects().indexOf(active)
     group.set({
-      left: old.left ?? 0,
-      top: old.top ?? 0,
+      left: placement?.left ?? old.left ?? 0,
+      top: placement?.top ?? old.top ?? 0,
       // Tables are always kept upright so the HTML cell layer can map their
       // geometry without a rotation transform.
       angle: 0,
@@ -1336,7 +1349,7 @@ export function createDesigner() {
     table.value = cloneTableConfig(normalized)
     clampTableSelection(normalized)
     refreshSelection()
-    refreshLayers()
+    if (!live) refreshLayers()
     scheduleCommit()
   }
 
@@ -1503,6 +1516,31 @@ export function createDesigner() {
   function setTableHeightValue(height: number) {
     if (!table.value) return
     commitTableConfig(setTableHeight(table.value, height))
+  }
+
+  function toggleTableBorder(side: TableBorderSide) {
+    if (!table.value) return
+    commitTableConfig(
+      setRangeBorder(
+        table.value,
+        tableSelection,
+        side,
+        !tableBorderState.value[side],
+      ),
+    )
+  }
+
+  /** Live resize used while dragging the table's selection handles. */
+  function resizeTableFrom(
+    base: TableConfig,
+    width: number,
+    height: number,
+    left?: number,
+    top?: number,
+  ) {
+    if (!table.value) return
+    const sized = setTableHeight(setTableWidth(base, width), height)
+    commitTableConfig(sized, { left, top }, true)
   }
 
   // ------------------------------------------------------------------- data
@@ -1992,6 +2030,7 @@ export function createDesigner() {
     tableSelectionCount,
     tableCanMerge,
     tableCanSplit,
+    tableBorderState,
     // canvas lifecycle
     mount,
     destroy,
@@ -2034,6 +2073,8 @@ export function createDesigner() {
     setTableSize,
     setTableWidthValue,
     setTableHeightValue,
+    toggleTableBorder,
+    resizeTableFrom,
     // data bindings
     addDataField,
     updateDataField,

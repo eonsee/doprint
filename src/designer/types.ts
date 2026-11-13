@@ -19,6 +19,11 @@ export interface TableCell {
   fill?: string
   /** cell text colour */
   color?: string
+  /** per-side border visibility; `false` hides that side (default visible) */
+  borderTop?: boolean
+  borderRight?: boolean
+  borderBottom?: boolean
+  borderLeft?: boolean
 }
 
 export interface TableMerge {
