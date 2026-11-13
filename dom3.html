@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+    <meta charset="UTF-8">
+    <title>JSpreadsheet CE probe</title>
+    <style>
+      body { font: 14px sans-serif; margin: 24px; }
+      #out { white-space: pre-wrap; background: #f5f5f5; padding: 12px; max-height: 320px; overflow: auto; }
+    </style>
+    <script type="module" crossorigin="" src="/assets/excel-probe-f132bf7a.js"></script>
+    <link rel="stylesheet" href="/assets/excel-probe-49dc4e3d.css">
+  </head>
+  <body>
+    <h1>JSpreadsheet CE × Vite 4 probe</h1>
+    <div id="grid" class="jss_spreadsheet jtabs jtabs-animation" tabindex="0"><div class="jtabs-headers-container" style="display: none;"><div class="jtabs-headers" role="tablist"><div class="jtabs-selected" aria-selected="true">Sheet1</div><div class="jtabs-border"></div></div><div class="jtabs-controls" draggable="false"><div class="jtabs-prev disabled" style="display: none;"></div><div class="jtabs-next disabled" style="display: none;"></div></div></div><div class="jtabs-content" role="region" aria-label="Tab Panels"><div class="jtabs-selected jss_container"><div class="jss_content"><table class="jss_worksheet jss_overflow" cellpadding="0" cellspacing="0" unselectable="yes"><colgroup><col width="50"><col width="150"><col width="90"><col width="90"></colgroup><thead class="draggable resizable"><tr><td class="jss_selectall"></td><td data-x="0" class="selected" style="text-align: center;">A</td><td data-x="1" class="selected" style="text-align: center;">B</td><td data-x="2" style="text-align: center;">C</td></tr></thead><tbody class="draggable resizable"><tr data-y="0" class="selected" style="height: 40px;"><td data-y="0" class="jss_row">1</td><td data-x="0" data-y="0" colspan="2" data-merged="true" class="highlight-selected highlight highlight-top highlight-bottom highlight-left highlight-right" style="text-align: center; font-weight: bold; background-color: rgb(243, 244, 246);">{{customer}}</td><td data-x="1" data-y="0" style="text-align: center; display: none;"></td><td data-x="2" data-y="0" style="text-align: center; font-weight: bold;">金额</td></tr><tr data-y="1"><td data-y="1" class="jss_row">2</td><td data-x="0" data-y="1" style="text-align: right; vertical-align: bottom; border: 1px solid rgb(255, 0, 0);">张三</td><td data-x="1" data-y="1" style="text-align: center;">A-1001</td><td data-x="2" data-y="1" style="text-align: center;">128.00</td></tr><tr data-y="2"><td data-y="2" class="jss_row">3</td><td data-x="0" data-y="2" style="text-align: center;">李四</td><td data-x="1" data-y="2" style="text-align: center;">A-1002</td><td data-x="2" data-y="2" style="text-align: center;">99.50</td></tr><tr data-y="3"><td data-y="3" class="jss_row">4</td><td data-x="0" data-y="3" style="text-align: center;"></td><td data-x="1" data-y="3" style="text-align: center; overflow: hidden;"></td><td data-x="2" data-y="3" style="text-align: center;">227.5</td></tr></tbody></table><div class="jss_corner" unselectable="on" onselectstart="return false" style="top: 62px; left: 287px;"></div><textarea class="jss_textarea" id="jss_textarea" tabindex="-1" aria-hidden="true"></textarea></div><div class="jss_pagination" style="display: none;"><div></div><div></div></div><div class="jss_about"><a href="https://bossanova.uk/jspreadsheet/"><span>Jspreadsheet CE</span></a></div></div></div><div class="jss_contextmenu jcontextmenu"></div></div>
+    <pre id="out">{
+  "ok": true,
+  "version": {
+    "version": "5.0.0",
+    "host": "https://bossanova.uk/jspreadsheet",
+    "license": "MIT"
+  },
+  "data": [
+    [
+      "{{customer}}",
+      "",
+      "金额"
+    ],
+    [
+      "张三",
+      "A-1001",
+      "128.00"
+    ],
+    [
+      "李四",
+      "A-1002",
+      "99.50"
+    ],
+    [
+      "",
+      "",
+      "=SUM(C2:C3)"
+    ]
+  ],
+  "merge": {
+    "A1": [
+      2,
+      1
+    ]
+  },
+  "styleA1": "text-align: center; font-weight: bold; background-color: rgb(243, 244, 246);",
+  "styleA2": "text-align: right; vertical-align: bottom; border: 1px solid rgb(255, 0, 0);",
+  "width0": 150,
+  "height0": "40px",
+  "sheetCount": 1,
+  "formulaRaw": "=SUM(C2:C3)",
+  "formulaProcessed": "227.5",
+  "formulaData": "=SUM(C2:C3)",
+  "formulaAllProcessed": "227.5"
+}</pre>
+    
+  
+
+</body></html>
