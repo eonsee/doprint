@@ -58,6 +58,7 @@ import {
   type TableRange,
 } from './table'
 import { buildTableObject } from './tableFabric'
+import { createPdfFromImage, previewPixelRatio } from './pdf'
 
 const STORAGE_KEY = 'doprint.template.v1'
 const HISTORY_LIMIT = 50
@@ -660,6 +661,44 @@ export function createDesigner() {
     }
   }
 
+  /**
+   * Shared font / size of the template, shown by the top bar's global controls.
+   * `layers` is read to re-evaluate after canvas mutations, which are not
+   * reactive on their own.
+   */
+  const globalTextStyle = computed(() => {
+    void layers.value
+    const objects = canvas ? canvas.getObjects() : []
+    let fontFamily = DEFAULT_FONT
+    let fontSize = DEFAULT_TEXT_SIZE
+    let count = 0
+    for (const obj of objects) {
+      if (isTextType(typeOf(obj))) {
+        const anyObj = obj as any
+        if (!count) {
+          fontFamily = anyObj.fontFamily || DEFAULT_FONT
+          fontSize =
+            (anyObj.fontSize ?? DEFAULT_TEXT_SIZE) * Math.abs(anyObj.scaleY ?? 1)
+        }
+        count += 1
+      } else if (isTableObject(obj)) {
+        const config = tableConfigOf(obj)
+        if (config) {
+          if (!count) {
+            fontFamily = config.fontFamily
+            fontSize = config.fontSize
+          }
+          count += 1
+        }
+      }
+    }
+    return {
+      fontFamily,
+      fontSizePx: round(fontSize * PX_PER_MM, 1),
+      count,
+    }
+  })
+
   function refreshLayers() {
     if (!canvas) return
     const activeIds = new Set(
@@ -1242,6 +1281,75 @@ export function createDesigner() {
       obj.setCoords()
     }
 
+    canvas.requestRenderAll()
+    refreshSelection()
+    refreshLayers()
+    scheduleCommit()
+  }
+
+  /**
+   * Apply a font family / size to every text element and table at once. The
+   * top bar's global controls use this; the whole change is one undo step.
+   */
+  function applyGlobalTextStyle(patch: {
+    fontFamily?: string
+    fontSizePx?: number
+  }) {
+    if (!canvas) return
+    const fontSize =
+      patch.fontSizePx === undefined
+        ? undefined
+        : clamp(patch.fontSizePx, 4, 300) * PX_TO_MM
+    const objects = canvas.getObjects()
+    let changed = 0
+
+    canvas.discardActiveObject()
+
+    for (const obj of objects) {
+      const anyObj = obj as any
+      if (isTextType(typeOf(obj))) {
+        if (patch.fontFamily !== undefined) {
+          anyObj.set('fontFamily', patch.fontFamily)
+        }
+        if (fontSize !== undefined) {
+          anyObj.set(
+            'fontSize',
+            Math.max(0.5, fontSize / Math.abs(anyObj.scaleY || 1)),
+          )
+        }
+        obj.setCoords()
+        changed += 1
+        continue
+      }
+      if (!isTableObject(obj)) continue
+      const config = tableConfigOf(obj)
+      if (!config) continue
+      if (patch.fontFamily !== undefined) config.fontFamily = patch.fontFamily
+      if (fontSize !== undefined) config.fontSize = fontSize
+      const next = normalizeTableConfig(config)
+      const group = buildTableObject(next)
+      const index = canvas.getObjects().indexOf(obj)
+      group.set({
+        left: anyObj.left ?? 0,
+        top: anyObj.top ?? 0,
+        angle: 0,
+        scaleX: 1,
+        scaleY: 1,
+        opacity: anyObj.opacity ?? 1,
+        visible: anyObj.visible !== false,
+        name: anyObj.name || KIND_LABEL.table,
+        elementId: anyObj.elementId || uid(),
+        locked: anyObj.locked === true,
+      } as any)
+      ;(group as any).customKind = 'table'
+      group.set(CONTROL_STYLE as any)
+      applyLock(group, anyObj.locked === true)
+      canvas.remove(obj)
+      canvas.insertAt(index, group)
+      changed += 1
+    }
+
+    if (!changed) return
     canvas.requestRenderAll()
     refreshSelection()
     refreshLayers()
@@ -1970,10 +2078,11 @@ export function createDesigner() {
     }
   }
 
-  async function generateSVG(): Promise<string> {
-    if (!canvas) return ''
-    // Build from the template rather than the live canvas so sample data can
-    // replace `{{field}}` placeholders in both text objects and table cells.
+  /**
+   * Build a throwaway canvas from the template rather than the live canvas so
+   * sample data can replace `{{field}}` placeholders in text and table cells.
+   */
+  async function buildPreviewCanvas(): Promise<StaticCanvas> {
     const template = resolveTemplateBindings(serialize(), dataFields.value)
     const objects = await Promise.all(
       template.elements.map((element) => elementToObject(element)),
@@ -1983,15 +2092,42 @@ export function createDesigner() {
       height: page.height,
       enableRetinaScaling: false,
     })
+    const valid = objects.filter(Boolean) as FabricObject[]
+    if (valid.length) temp.add(...valid)
+    return temp
+  }
+
+  async function generateSVG(): Promise<string> {
+    if (!canvas) return ''
+    const temp = await buildPreviewCanvas()
     try {
-      const valid = objects.filter(Boolean) as FabricObject[]
-      if (valid.length) temp.add(...valid)
       return temp.toSVG({
         width: `${round(page.width, 2)}mm`,
         height: `${round(page.height, 2)}mm`,
         viewBox: { x: 0, y: 0, width: page.width, height: page.height },
         suppressPreamble: true,
       })
+    } finally {
+      temp.destroy()
+    }
+  }
+
+  /** Render the resolved template into a single-page PDF for the preview. */
+  async function generatePDF(): Promise<Uint8Array> {
+    if (!canvas) return new Uint8Array()
+    const temp = await buildPreviewCanvas()
+    try {
+      const dataUrl = temp.toDataURL({
+        format: 'png',
+        multiplier: previewPixelRatio(page.width, page.height),
+        enableRetinaScaling: false,
+      })
+      return await createPdfFromImage(
+        dataUrl,
+        page.width,
+        page.height,
+        templateName.value,
+      )
     } finally {
       temp.destroy()
     }
@@ -2031,6 +2167,7 @@ export function createDesigner() {
     tableCanMerge,
     tableCanSplit,
     tableBorderState,
+    globalTextStyle,
     // canvas lifecycle
     mount,
     destroy,
@@ -2082,6 +2219,7 @@ export function createDesigner() {
     importDataJson,
     // editing
     updateSelected,
+    applyGlobalTextStyle,
     deleteSelected,
     duplicateSelected,
     moveSelected,
@@ -2099,6 +2237,7 @@ export function createDesigner() {
     downloadTemplate,
     importTemplate,
     generateSVG,
+    generatePDF,
   }
 }
 

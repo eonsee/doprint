@@ -16,6 +16,7 @@ import {
 } from 'lucide-vue-next'
 import BindingPicker from './ui/BindingPicker.vue'
 import ColorField from './ui/ColorField.vue'
+import FontSizeSelect from './ui/FontSizeSelect.vue'
 import InspectorSection from './ui/InspectorSection.vue'
 import NumField from './ui/NumField.vue'
 import { useDesigner } from '../designer/context'
@@ -446,13 +447,9 @@ function toggleCanvasEditing() {
       </label>
 
       <div class="field-grid">
-        <NumField
+        <FontSizeSelect
           label="字号"
           :model-value="fontSizePx"
-          unit="px"
-          :step="1"
-          :min="4"
-          :max="300"
           @update:model-value="setFontSizePx"
         />
         <NumField

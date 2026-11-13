@@ -104,15 +104,21 @@ button:disabled {
 
 .topbar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 56px;
-  padding: 0 16px;
+  flex-direction: column;
+  align-items: stretch;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   position: relative;
   z-index: 10;
+}
+
+.topbar-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 16px;
 }
 
 .brand {
@@ -187,6 +193,133 @@ button:disabled {
 
 .topbar-spacer {
   flex: 1;
+  min-width: 0;
+}
+
+/* ------------------------------------------- topbar quick property strip */
+
+.topbar-props {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  background: #f8fafc;
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.topbar-props::-webkit-scrollbar {
+  display: none;
+}
+
+.topbar-props .segmented,
+.topbar-props .icon-btn,
+.topbar-props .kind-chip {
+  flex-shrink: 0;
+}
+
+.tbp-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.tbp-select,
+.tbp-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tbp-select select {
+  height: 26px;
+  max-width: 112px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11.5px;
+  outline: none;
+}
+
+.tbp-num input {
+  width: 48px;
+  height: 26px;
+  padding: 0 2px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.tbp-select select:focus,
+.tbp-num input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.tbp-num input:disabled {
+  background: #f1f4f8;
+  color: #a3adbb;
+}
+
+.tbp-num em {
+  font-style: normal;
+  font-size: 10px;
+  color: #a3adbb;
+}
+
+.tbp-sep {
+  width: 1px;
+  height: 18px;
+  flex-shrink: 0;
+  margin: 0 2px;
+  background: var(--border-strong);
+}
+
+.topbar-props .btn.tbp-apply {
+  height: 26px;
+  padding: 0 10px;
+  gap: 4px;
+  border-color: var(--border-strong);
+  background: #fff;
+  font-size: 11.5px;
+}
+
+.topbar-props .btn.tbp-apply:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.tbp-hint {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tbp-hint-end {
+  color: #a3adbb;
+}
+
+.tbp-danger:hover:not(:disabled) {
+  background: #fef2f2;
+  color: var(--danger);
 }
 
 .autosave {
@@ -857,6 +990,34 @@ button:disabled {
   pointer-events: none;
 }
 
+.font-size-field .num-control select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #e3e8ef;
+  border-radius: 6px;
+  background: #fbfcfe;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.font-size-field .num-control select:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.font-size-field .num-control select:focus {
+  background: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.font-size-field .num-control select:disabled {
+  background: #f4f6f9;
+  color: #a3adbb;
+}
+
 .select-field {
   display: flex;
   flex-direction: column;
@@ -1282,20 +1443,41 @@ button:disabled {
 
 .preview-stage {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 28px;
   background: #f3f5f9;
   display: flex;
   justify-content: center;
   align-items: flex-start;
+  padding: 28px;
 }
 
 .preview-stage > svg {
   background: #fff;
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08),
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.08),
     0 20px 40px -24px rgba(15, 23, 42, 0.45);
   max-width: 100%;
   height: auto;
+}
+
+.preview-stage-pdf {
+  padding: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.preview-pdf {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.preview-loading {
+  margin: auto;
+  color: #64748b;
+  font-size: 12px;
 }
 
 /* ------------------------------------------------------------- data binding */
@@ -1761,11 +1943,20 @@ button:disabled {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
+@media (max-width: 1280px) {
+  .tbp-hint-end {
+    display: none;
+  }
+}
+
 @media (max-width: 1100px) {
   .template-name {
     width: 160px;
   }
   .autosave {
+    display: none;
+  }
+  .tbp-hint {
     display: none;
   }
 }

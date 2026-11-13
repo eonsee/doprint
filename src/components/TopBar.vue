@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Download, Eye, Redo2, Undo2, Upload } from 'lucide-vue-next'
+import { Download, Eye, FileText, Redo2, Undo2, Upload } from 'lucide-vue-next'
+import TopBarProps from './TopBarProps.vue'
 import { useDesigner } from '../designer/context'
 
 defineProps<{
-  previewLoading: boolean
+  previewLoading: 'vector' | 'pdf' | null
 }>()
 
 const emit = defineEmits<{
-  (e: 'preview'): void
+  (e: 'preview', mode: 'vector' | 'pdf'): void
 }>()
 
 const designer = useDesigner()
@@ -47,64 +48,83 @@ async function onFileChange(event: Event) {
 
 <template>
   <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">D</span>
-      <span class="brand-name">DoPrint <span class="brand-sub">设计器</span></span>
+    <div class="topbar-main">
+      <div class="brand">
+        <span class="brand-mark">D</span>
+        <span class="brand-name">DoPrint <span class="brand-sub">设计器</span></span>
+      </div>
+
+      <div class="topbar-divider"></div>
+
+      <input
+        class="template-name"
+        :value="templateName"
+        placeholder="模板名称"
+        @change="onNameChange"
+      />
+
+      <div class="topbar-actions">
+        <button
+          class="icon-btn"
+          title="撤销 (Ctrl+Z)"
+          :disabled="!canUndo"
+          @click="designer.undo()"
+        >
+          <Undo2 :size="17" />
+        </button>
+        <button
+          class="icon-btn"
+          title="重做 (Ctrl+Shift+Z)"
+          :disabled="!canRedo"
+          @click="designer.redo()"
+        >
+          <Redo2 :size="17" />
+        </button>
+      </div>
+
+      <div class="topbar-spacer"></div>
+
+      <span class="autosave">{{ savedLabel }}</span>
+
+      <button
+        class="btn ghost"
+        title="矢量预览（SVG，可缩放）"
+        :disabled="previewLoading !== null"
+        @click="emit('preview', 'vector')"
+      >
+        <Eye :size="15" />
+        {{ previewLoading === 'vector' ? '生成中…' : '矢量预览' }}
+      </button>
+
+      <button
+        class="btn ghost"
+        title="PDF 预览（按打印尺寸生成）"
+        :disabled="previewLoading !== null"
+        @click="emit('preview', 'pdf')"
+      >
+        <FileText :size="15" />
+        {{ previewLoading === 'pdf' ? '生成中…' : 'PDF 预览' }}
+      </button>
+
+      <button class="btn ghost" @click="onImportClick">
+        <Upload :size="15" />
+        导入
+      </button>
+
+      <button class="btn primary" @click="designer.downloadTemplate()">
+        <Download :size="15" />
+        导出 JSON
+      </button>
+
+      <input
+        ref="fileInput"
+        class="visually-hidden"
+        type="file"
+        accept="application/json,.json"
+        @change="onFileChange"
+      />
     </div>
 
-    <div class="topbar-divider"></div>
-
-    <input
-      class="template-name"
-      :value="templateName"
-      placeholder="模板名称"
-      @change="onNameChange"
-    />
-
-    <div class="topbar-actions">
-      <button
-        class="icon-btn"
-        title="撤销 (Ctrl+Z)"
-        :disabled="!canUndo"
-        @click="designer.undo()"
-      >
-        <Undo2 :size="17" />
-      </button>
-      <button
-        class="icon-btn"
-        title="重做 (Ctrl+Shift+Z)"
-        :disabled="!canRedo"
-        @click="designer.redo()"
-      >
-        <Redo2 :size="17" />
-      </button>
-    </div>
-
-    <div class="topbar-spacer"></div>
-
-    <span class="autosave">{{ savedLabel }}</span>
-
-    <button class="btn ghost" :disabled="previewLoading" @click="emit('preview')">
-      <Eye :size="15" />
-      {{ previewLoading ? '生成中…' : '矢量预览' }}
-    </button>
-
-    <button class="btn ghost" @click="onImportClick">
-      <Upload :size="15" />
-      导入
-    </button>
-
-    <button class="btn primary" @click="designer.downloadTemplate()">
-      <Download :size="15" />
-      导出 JSON
-    </button>
-
-    <input
-      ref="fileInput"
-      class="visually-hidden"
-      type="file"
-      accept="application/json,.json"
-      @change="onFileChange"
-    />
+    <TopBarProps />
   </header>
 </template>

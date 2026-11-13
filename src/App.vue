@@ -13,29 +13,54 @@ provideDesigner(designer)
 
 const { notice } = designer
 
-const previewOpen = ref(false)
-const previewSvg = ref('')
-const previewLoading = ref(false)
+type PreviewMode = 'vector' | 'pdf'
 
-async function openPreview() {
-  if (previewLoading.value) return
-  previewLoading.value = true
+const previewOpen = ref(false)
+const previewMode = ref<PreviewMode>('pdf')
+const previewSvg = ref('')
+const previewUrl = ref('')
+const previewLoadingMode = ref<PreviewMode | null>(null)
+
+function revokePreviewUrl() {
+  if (!previewUrl.value) return
+  URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+}
+
+async function openPreview(mode: PreviewMode) {
+  if (previewLoadingMode.value) return
+  previewLoadingMode.value = mode
   try {
-    previewSvg.value = await designer.generateSVG()
+    if (mode === 'vector') {
+      const svg = await designer.generateSVG()
+      if (!svg) throw new Error('empty svg')
+      previewMode.value = 'vector'
+      previewSvg.value = svg
+    } else {
+      const bytes = await designer.generatePDF()
+      if (!bytes.length) throw new Error('empty pdf')
+      const blob = new Blob([bytes], { type: 'application/pdf' })
+      revokePreviewUrl()
+      previewUrl.value = URL.createObjectURL(blob)
+      previewMode.value = 'pdf'
+    }
     previewOpen.value = true
   } catch (err) {
-    console.error('generate SVG failed', err)
-    designer.notice.value = '矢量预览生成失败'
+    console.error(`generate ${mode} preview failed`, err)
+    designer.notice.value =
+      mode === 'vector' ? '矢量预览生成失败' : 'PDF 预览生成失败'
     setTimeout(() => {
       designer.notice.value = ''
     }, 3200)
   } finally {
-    previewLoading.value = false
+    previewLoadingMode.value = null
   }
 }
 
 function closePreview() {
   previewOpen.value = false
+  previewSvg.value = ''
+  revokePreviewUrl()
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -133,20 +158,27 @@ function onKeydown(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  revokePreviewUrl()
   designer.destroy()
 })
 </script>
 
 <template>
   <div class="app-shell">
-    <TopBar :preview-loading="previewLoading" @preview="openPreview" />
+    <TopBar :preview-loading="previewLoadingMode" @preview="openPreview" />
     <div class="app-body">
       <ToolRail />
       <DesignerStage />
       <InspectorPanel />
     </div>
 
-    <PreviewModal :open="previewOpen" :svg="previewSvg" @close="closePreview" />
+    <PreviewModal
+      :open="previewOpen"
+      :mode="previewMode"
+      :svg="previewSvg"
+      :pdf-url="previewUrl"
+      @close="closePreview"
+    />
 
     <Transition name="toast">
       <div v-if="notice" class="toast">{{ notice }}</div>

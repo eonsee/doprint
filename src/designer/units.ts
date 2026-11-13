@@ -31,6 +31,25 @@ export const FONT_OPTIONS = [
 
 export const GRID_SIZES = [1, 5, 10]
 
+/** Preset font sizes (CSS px) offered by font-size dropdowns. */
+export const FONT_SIZE_PRESETS = [
+  8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48, 56, 64, 72, 96,
+  120, 144, 192,
+]
+
+/**
+ * Dropdown options for a font size: the common presets plus the current value,
+ * so a custom size from an imported template stays selectable.
+ */
+export function fontSizeOptions(current: number, min = 4, max = 300): number[] {
+  const sizes = new Set(
+    FONT_SIZE_PRESETS.filter((size) => size >= min && size <= max),
+  )
+  const value = round(clamp(current, min, max), 1)
+  if (value > 0) sizes.add(value)
+  return [...sizes].sort((a, b) => a - b)
+}
+
 export function round(value: number, digits = 2): number {
   const factor = 10 ** digits
   return Math.round((Number(value) + Number.EPSILON) * factor) / factor
