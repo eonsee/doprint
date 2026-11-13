@@ -1,11 +1,26 @@
 import type {
   TableAlign,
   TableCell,
+  TableCellData,
+  TableCellStyle,
+  TableColumnData,
   TableConfig,
-  TableMerge,
+  TableMergeData,
+  TableRowData,
   TableVAlign,
 } from './types'
 import { DEFAULT_FONT_PX, PX_TO_MM, clamp, round } from './units'
+
+/**
+ * Table model and commands.
+ *
+ * The snapshot mirrors Univer's worksheet data model: row / column metadata
+ * are separate maps, cell data is sparse and keyed by row/column, merges are
+ * inclusive ranges, and cell styles are interned in a registry. Everything in
+ * this file is pure (apart from creating objects / arrays) and has no Fabric
+ * dependency, so rendering and canvas interaction can be replaced without
+ * touching table logic.
+ */
 
 export const TABLE_LIMITS = {
   minRows: 1,
@@ -36,12 +51,40 @@ export interface TableRange {
   endCol: number
 }
 
-export interface TableRegion extends TableMerge {
+export interface TableRegion {
+  row: number
+  col: number
+  rowSpan: number
+  colSpan: number
   x: number
   y: number
   width: number
   height: number
 }
+
+export const TABLE_VERSION = 2 as const
+
+const DEFAULT_STYLE_ID = 'default'
+const HEADER_STYLE_ID = 'header'
+const DEFAULT_CELL_STYLE: TableCellStyle = { align: 'left', valign: 'middle' }
+const HEADER_CELL_STYLE: TableCellStyle = {
+  align: 'center',
+  valign: 'middle',
+  bold: true,
+  fill: DEFAULT_TABLE.headerFill,
+}
+
+const STYLE_KEYS = [
+  'align',
+  'valign',
+  'bold',
+  'fill',
+  'color',
+  'borderTop',
+  'borderRight',
+  'borderBottom',
+  'borderLeft',
+] as const
 
 function clampRows(value: unknown): number {
   return clamp(
@@ -59,52 +102,512 @@ function clampCols(value: unknown): number {
   )
 }
 
-export function defaultCell(row = 1): TableCell {
-  if (row === 0) {
-    return {
-      text: '',
-      align: 'center',
-      valign: 'middle',
-      bold: true,
-      fill: DEFAULT_TABLE.headerFill,
-    }
-  }
-  return { text: '', align: 'left', valign: 'middle' }
+function readDimension(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0
+    ? round(clamp(number, min, max), 2)
+    : fallback
 }
 
-export function sanitizeCell(input: unknown, row = 1): TableCell {
-  const raw = (input && typeof input === 'object' ? input : {}) as TableCell
-  const cell: TableCell = {}
-  if (typeof raw.text === 'string') cell.text = raw.text
+function cleanStyle(input: unknown): TableCellStyle {
+  const raw = (input && typeof input === 'object' ? input : {}) as TableCellStyle
+  const style: TableCellStyle = {}
   if (raw.align === 'left' || raw.align === 'center' || raw.align === 'right') {
-    cell.align = raw.align
+    style.align = raw.align
   }
   if (
     raw.valign === 'top' ||
     raw.valign === 'middle' ||
     raw.valign === 'bottom'
   ) {
-    cell.valign = raw.valign
+    style.valign = raw.valign
   }
-  if (raw.bold === true) cell.bold = true
-  if (typeof raw.fill === 'string' && raw.fill) cell.fill = raw.fill
-  if (typeof raw.color === 'string' && raw.color) cell.color = raw.color
-  // Store only hidden sides: a missing flag means the border is visible.
-  if (raw.borderTop === false) cell.borderTop = false
-  if (raw.borderRight === false) cell.borderRight = false
-  if (raw.borderBottom === false) cell.borderBottom = false
-  if (raw.borderLeft === false) cell.borderLeft = false
-  // Normalise an entirely empty cell to a fresh default.
-  if (!Object.keys(cell).length) {
-    return row === 0
-      ? { align: 'center', valign: 'middle', bold: true, fill: DEFAULT_TABLE.headerFill }
-      : { align: 'left', valign: 'middle' }
+  // `false` is meaningful for bold and the border flags: it overrides a style
+  // inherited from the row (for example, un-bolding one header cell).
+  if (raw.bold === true || raw.bold === false) style.bold = raw.bold
+  if (typeof raw.fill === 'string') style.fill = raw.fill
+  if (typeof raw.color === 'string') style.color = raw.color
+  if (raw.borderTop === true || raw.borderTop === false) {
+    style.borderTop = raw.borderTop
   }
-  return cell
+  if (raw.borderRight === true || raw.borderRight === false) {
+    style.borderRight = raw.borderRight
+  }
+  if (raw.borderBottom === true || raw.borderBottom === false) {
+    style.borderBottom = raw.borderBottom
+  }
+  if (raw.borderLeft === true || raw.borderLeft === false) {
+    style.borderLeft = raw.borderLeft
+  }
+  return style
 }
 
-function cloneCell(cell: TableCell | undefined, row: number): TableCell {
-  return sanitizeCell(cell ? { ...cell } : defaultCell(row), row) as TableCell
+function styleEquals(
+  a: TableCellStyle | undefined,
+  b: TableCellStyle | undefined,
+): boolean {
+  return STYLE_KEYS.every(
+    (key) => (a?.[key] ?? undefined) === (b?.[key] ?? undefined),
+  )
+}
+
+function mergeStyles(
+  ...styles: Array<TableCellStyle | undefined>
+): TableCellStyle {
+  const merged: TableCellStyle = {}
+  for (const style of styles) {
+    if (style) Object.assign(merged, style)
+  }
+  return merged
+}
+
+/** Find an existing style id with the same properties, or register a new one. */
+function ensureStyleId(
+  styles: Record<string, TableCellStyle>,
+  style: TableCellStyle,
+): string {
+  const cleaned = cleanStyle(style)
+  for (const [id, existing] of Object.entries(styles)) {
+    if (styleEquals(existing, cleaned)) return id
+  }
+  let index = 1
+  while (styles[`s${index}`] !== undefined) index += 1
+  const id = `s${index}`
+  styles[id] = cleaned
+  return id
+}
+
+function rowBaseStyle(
+  styles: Record<string, TableCellStyle>,
+  defaultStyle: string,
+  rowData: Record<number, TableRowData>,
+  row: number,
+): TableCellStyle {
+  const base = styles[defaultStyle] ?? DEFAULT_CELL_STYLE
+  const rowStyleId = rowData[row]?.s
+  return mergeStyles(base, rowStyleId ? styles[rowStyleId] : undefined)
+}
+
+function removeCellIfEmpty(
+  cellData: Record<number, Record<number, TableCellData>>,
+  row: number,
+  col: number,
+) {
+  const cell = cellData[row]?.[col]
+  if (!cell || cell.v || cell.s) return
+  delete cellData[row][col]
+  if (!Object.keys(cellData[row]).length) delete cellData[row]
+}
+
+function setCellValue(
+  config: TableConfig,
+  row: number,
+  col: number,
+  value: string,
+) {
+  const existing = config.cellData[row]?.[col]
+  if (!value) {
+    if (!existing) return
+    delete existing.v
+    removeCellIfEmpty(config.cellData, row, col)
+    return
+  }
+  if (!config.cellData[row]) config.cellData[row] = {}
+  if (!config.cellData[row][col]) config.cellData[row][col] = {}
+  config.cellData[row][col].v = value
+}
+
+function setCellStyle(
+  config: TableConfig,
+  row: number,
+  col: number,
+  style: TableCellStyle,
+) {
+  const base = rowBaseStyle(
+    config.styles,
+    config.defaultStyle,
+    config.rowData,
+    row,
+  )
+  if (styleEquals(style, base)) {
+    const existing = config.cellData[row]?.[col]
+    if (!existing) return
+    delete existing.s
+    removeCellIfEmpty(config.cellData, row, col)
+    return
+  }
+  const styleId = ensureStyleId(config.styles, style)
+  if (!config.cellData[row]) config.cellData[row] = {}
+  if (!config.cellData[row][col]) config.cellData[row][col] = {}
+  config.cellData[row][col].s = styleId
+}
+
+/** Drop style entries that no row or cell references any more. */
+function pruneStyles(config: TableConfig) {
+  const used = new Set<string>([
+    DEFAULT_STYLE_ID,
+    HEADER_STYLE_ID,
+    config.defaultStyle,
+  ])
+
+  for (const row of Object.values(config.rowData)) {
+    if (!row.s) continue
+    if (config.styles[row.s]) used.add(row.s)
+    else delete row.s
+  }
+
+  for (const [rowKey, row] of Object.entries(config.cellData)) {
+    const rowIndex = Number(rowKey)
+    for (const [colKey, cell] of Object.entries(row ?? {})) {
+      if (!cell.s) continue
+      if (config.styles[cell.s]) used.add(cell.s)
+      else delete cell.s
+      if (!cell.v && !cell.s) {
+        delete config.cellData[rowIndex][Number(colKey)]
+      }
+    }
+    if (!Object.keys(config.cellData[rowIndex] ?? {}).length) {
+      delete config.cellData[rowIndex]
+    }
+  }
+
+  for (const id of Object.keys(config.styles)) {
+    if (!used.has(id)) delete config.styles[id]
+  }
+  if (!config.styles[DEFAULT_STYLE_ID]) {
+    config.styles[DEFAULT_STYLE_ID] = { ...DEFAULT_CELL_STYLE }
+  }
+  if (!config.styles[HEADER_STYLE_ID]) {
+    config.styles[HEADER_STYLE_ID] = { ...HEADER_CELL_STYLE }
+  }
+  if (!config.styles[config.defaultStyle]) {
+    config.defaultStyle = DEFAULT_STYLE_ID
+  }
+}
+
+function normalizeMerges(
+  input: unknown,
+  rows: number,
+  cols: number,
+): TableMergeData[] {
+  if (!Array.isArray(input)) return []
+  const merges: TableMergeData[] = []
+  const seen = new Set<string>()
+
+  for (const candidate of input) {
+    if (!candidate || typeof candidate !== 'object') continue
+    const raw = candidate as Record<string, unknown>
+    let startRow: number
+    let endRow: number
+    let startColumn: number
+    let endColumn: number
+
+    if ('startRow' in raw || 'startColumn' in raw) {
+      startRow = Math.round(Number(raw.startRow))
+      endRow = Math.round(Number(raw.endRow))
+      startColumn = Math.round(Number(raw.startColumn))
+      endColumn = Math.round(Number(raw.endColumn))
+    } else {
+      // Version 1 shape: anchor plus rowSpan / colSpan.
+      const row = Math.round(Number(raw.row))
+      const col = Math.round(Number(raw.col))
+      const rowSpan = Math.round(Number(raw.rowSpan))
+      const colSpan = Math.round(Number(raw.colSpan))
+      startRow = row
+      startColumn = col
+      endRow = row + rowSpan - 1
+      endColumn = col + colSpan - 1
+    }
+
+    if (
+      !Number.isFinite(startRow) ||
+      !Number.isFinite(endRow) ||
+      !Number.isFinite(startColumn) ||
+      !Number.isFinite(endColumn)
+    ) {
+      continue
+    }
+
+    const top = Math.min(startRow, endRow)
+    const bottom = Math.max(startRow, endRow)
+    const left = Math.min(startColumn, endColumn)
+    const right = Math.max(startColumn, endColumn)
+    if (top < 0 || left < 0) continue
+    if (bottom >= rows || right >= cols) continue
+    if (top === bottom && left === right) continue
+
+    let overlaps = false
+    for (let row = top; row <= bottom && !overlaps; row += 1) {
+      for (let col = left; col <= right; col += 1) {
+        if (seen.has(`${row},${col}`)) {
+          overlaps = true
+          break
+        }
+      }
+    }
+    if (overlaps) continue
+
+    for (let row = top; row <= bottom; row += 1) {
+      for (let col = left; col <= right; col += 1) seen.add(`${row},${col}`)
+    }
+    merges.push({
+      startRow: top,
+      endRow: bottom,
+      startColumn: left,
+      endColumn: right,
+    })
+  }
+
+  merges.sort(
+    (a, b) =>
+      a.startRow - b.startRow || a.startColumn - b.startColumn,
+  )
+  return merges
+}
+
+function readTableFields(raw: any, config: TableConfig): TableConfig {
+  config.fontSize = Number.isFinite(Number(raw.fontSize))
+    ? round(clamp(Number(raw.fontSize), 0.5, 300 * PX_TO_MM), 2)
+    : DEFAULT_TABLE.fontSize
+  config.fontFamily =
+    typeof raw.fontFamily === 'string' && raw.fontFamily
+      ? raw.fontFamily
+      : DEFAULT_TABLE.fontFamily
+  config.color =
+    typeof raw.color === 'string' && raw.color
+      ? raw.color
+      : DEFAULT_TABLE.color
+  config.borderColor =
+    typeof raw.borderColor === 'string' && raw.borderColor
+      ? raw.borderColor
+      : DEFAULT_TABLE.borderColor
+  config.borderWidth = Number.isFinite(Number(raw.borderWidth))
+    ? round(clamp(Number(raw.borderWidth), 0, 5), 2)
+    : DEFAULT_TABLE.borderWidth
+  config.padding = Number.isFinite(Number(raw.padding))
+    ? round(clamp(Number(raw.padding), 0, 20), 2)
+    : DEFAULT_TABLE.padding
+  config.background =
+    typeof raw.background === 'string' && raw.background
+      ? raw.background
+      : DEFAULT_TABLE.background
+  return config
+}
+
+function normalizeV2(raw: any): TableConfig {
+  const rows = clampRows(raw.rowCount)
+  const cols = clampCols(raw.columnCount)
+
+  const styles: Record<string, TableCellStyle> = {}
+  if (raw.styles && typeof raw.styles === 'object') {
+    for (const [id, style] of Object.entries(raw.styles)) {
+      if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) continue
+      styles[id] = cleanStyle(style)
+    }
+  }
+  if (!styles[DEFAULT_STYLE_ID]) {
+    styles[DEFAULT_STYLE_ID] = { ...DEFAULT_CELL_STYLE }
+  }
+  if (!styles[HEADER_STYLE_ID]) {
+    styles[HEADER_STYLE_ID] = { ...HEADER_CELL_STYLE }
+  }
+  const defaultStyle =
+    typeof raw.defaultStyle === 'string' && styles[raw.defaultStyle]
+      ? raw.defaultStyle
+      : DEFAULT_STYLE_ID
+
+  const rowData: Record<number, TableRowData> = {}
+  for (let row = 0; row < rows; row += 1) {
+    const source = raw.rowData?.[row]
+    const height = readDimension(
+      source?.h ?? raw.rowHeights?.[row],
+      0.5,
+      500,
+      DEFAULT_TABLE.rowHeight,
+    )
+    const styleId =
+      typeof source?.s === 'string' && styles[source.s] ? source.s : ''
+    rowData[row] = styleId ? { h: height, s: styleId } : { h: height }
+  }
+
+  const columnData: Record<number, TableColumnData> = {}
+  for (let col = 0; col < cols; col += 1) {
+    columnData[col] = {
+      w: readDimension(
+        raw.columnData?.[col]?.w ?? raw.colWidths?.[col],
+        0.5,
+        1000,
+        DEFAULT_TABLE.colWidth,
+      ),
+    }
+  }
+
+  const cellData: Record<number, Record<number, TableCellData>> = {}
+  for (let row = 0; row < rows; row += 1) {
+    const rowSource = raw.cellData?.[row]
+    if (!rowSource || typeof rowSource !== 'object') continue
+    const base = rowBaseStyle(styles, defaultStyle, rowData, row)
+    for (let col = 0; col < cols; col += 1) {
+      const source = rowSource[col]
+      if (!source || typeof source !== 'object') continue
+      const value =
+        typeof source.v === 'string'
+          ? source.v
+          : typeof source.text === 'string'
+            ? source.text
+            : ''
+      let styleId =
+        typeof source.s === 'string' && styles[source.s] ? source.s : ''
+      if (styleId && styleEquals(styles[styleId], base)) styleId = ''
+      if (!value && !styleId) continue
+      if (!cellData[row]) cellData[row] = {}
+      const cell: TableCellData = {}
+      if (value) cell.v = value
+      if (styleId) cell.s = styleId
+      cellData[row][col] = cell
+    }
+  }
+
+  const config: TableConfig = {
+    version: TABLE_VERSION,
+    rowCount: rows,
+    columnCount: cols,
+    rowData,
+    columnData,
+    cellData,
+    mergeData: normalizeMerges(raw.mergeData ?? raw.merges, rows, cols),
+    styles,
+    defaultStyle,
+    fontSize: DEFAULT_TABLE.fontSize,
+    fontFamily: DEFAULT_TABLE.fontFamily,
+    color: DEFAULT_TABLE.color,
+    borderColor: DEFAULT_TABLE.borderColor,
+    borderWidth: DEFAULT_TABLE.borderWidth,
+    padding: DEFAULT_TABLE.padding,
+    background: DEFAULT_TABLE.background,
+  }
+  readTableFields(raw, config)
+  pruneStyles(config)
+  return config
+}
+
+/** Migrate the version 1 dense table shape to the sparse snapshot. */
+function normalizeV1(raw: any): TableConfig {
+  const rows = clampRows(raw.rows)
+  const cols = clampCols(raw.cols)
+  const styles: Record<string, TableCellStyle> = {
+    [DEFAULT_STYLE_ID]: { ...DEFAULT_CELL_STYLE },
+    [HEADER_STYLE_ID]: { ...HEADER_CELL_STYLE },
+  }
+  const rowData: Record<number, TableRowData> = {}
+  for (let row = 0; row < rows; row += 1) {
+    rowData[row] = {
+      h: readDimension(
+        raw.rowHeights?.[row],
+        0.5,
+        500,
+        DEFAULT_TABLE.rowHeight,
+      ),
+    }
+  }
+  const columnData: Record<number, TableColumnData> = {}
+  for (let col = 0; col < cols; col += 1) {
+    columnData[col] = {
+      w: readDimension(
+        raw.colWidths?.[col],
+        0.5,
+        1000,
+        DEFAULT_TABLE.colWidth,
+      ),
+    }
+  }
+
+  const cellData: Record<number, Record<number, TableCellData>> = {}
+  for (let row = 0; row < rows; row += 1) {
+    const sourceRow = raw.cells?.[row]
+    if (!Array.isArray(sourceRow)) continue
+    const base = rowBaseStyle(styles, DEFAULT_STYLE_ID, rowData, row)
+    for (let col = 0; col < cols; col += 1) {
+      const cell = sourceRow[col]
+      if (!cell || typeof cell !== 'object') continue
+      const style = cleanStyle({
+        align: cell.align,
+        valign: cell.valign,
+        bold: cell.bold === true ? true : undefined,
+        fill: typeof cell.fill === 'string' ? cell.fill : undefined,
+        color: typeof cell.color === 'string' ? cell.color : undefined,
+        borderTop: cell.borderTop === false ? false : undefined,
+        borderRight: cell.borderRight === false ? false : undefined,
+        borderBottom: cell.borderBottom === false ? false : undefined,
+        borderLeft: cell.borderLeft === false ? false : undefined,
+      })
+      const value = typeof cell.text === 'string' ? cell.text : ''
+      let styleId =
+        Object.keys(style).length && !styleEquals(style, base)
+          ? ensureStyleId(styles, style)
+          : ''
+      if (styleId && styleEquals(styles[styleId], base)) styleId = ''
+      if (!value && !styleId) continue
+      if (!cellData[row]) cellData[row] = {}
+      const stored: TableCellData = {}
+      if (value) stored.v = value
+      if (styleId) stored.s = styleId
+      cellData[row][col] = stored
+    }
+  }
+
+  const config: TableConfig = {
+    version: TABLE_VERSION,
+    rowCount: rows,
+    columnCount: cols,
+    rowData,
+    columnData,
+    cellData,
+    mergeData: normalizeMerges(raw.merges, rows, cols),
+    styles,
+    defaultStyle: DEFAULT_STYLE_ID,
+    fontSize: DEFAULT_TABLE.fontSize,
+    fontFamily: DEFAULT_TABLE.fontFamily,
+    color: DEFAULT_TABLE.color,
+    borderColor: DEFAULT_TABLE.borderColor,
+    borderWidth: DEFAULT_TABLE.borderWidth,
+    padding: DEFAULT_TABLE.padding,
+    background: DEFAULT_TABLE.background,
+  }
+  readTableFields(raw, config)
+  pruneStyles(config)
+  return config
+}
+
+function isVersion1(raw: any): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  if (raw.version === TABLE_VERSION) return false
+  return (
+    Array.isArray(raw.cells) ||
+    Array.isArray(raw.rowHeights) ||
+    Array.isArray(raw.colWidths) ||
+    Array.isArray(raw.merges)
+  )
+}
+
+export function defaultCell(row = 1): TableCell {
+  return row === 0
+    ? { text: '', ...HEADER_CELL_STYLE }
+    : { text: '', ...DEFAULT_CELL_STYLE }
+}
+
+/** Effective cell used by the inspector; kept for compatibility with v1 data. */
+export function sanitizeCell(input: unknown, row = 1): TableCell {
+  const raw = (input && typeof input === 'object' ? input : {}) as TableCell
+  const text = typeof raw.text === 'string' ? raw.text : ''
+  const style = cleanStyle(raw)
+  if (!Object.keys(style).length) return defaultCell(row)
+  return { text, ...style }
 }
 
 export function cloneTableConfig(config: TableConfig): TableConfig {
@@ -125,15 +628,32 @@ export function createTableConfig(
   const colWidth = width
     ? Math.max(2, round(width / colCount, 2))
     : DEFAULT_TABLE.colWidth
+
+  const rowData: Record<number, TableRowData> = {}
+  for (let row = 0; row < rowCount; row += 1) {
+    rowData[row] =
+      row === 0
+        ? { h: rowHeight, s: HEADER_STYLE_ID }
+        : { h: rowHeight }
+  }
+  const columnData: Record<number, TableColumnData> = {}
+  for (let col = 0; col < colCount; col += 1) {
+    columnData[col] = { w: colWidth }
+  }
+
   return {
-    rows: rowCount,
-    cols: colCount,
-    rowHeights: Array.from({ length: rowCount }, () => rowHeight),
-    colWidths: Array.from({ length: colCount }, () => colWidth),
-    cells: Array.from({ length: rowCount }, (_, row) =>
-      Array.from({ length: colCount }, () => cloneCell(defaultCell(row), row)),
-    ),
-    merges: [],
+    version: TABLE_VERSION,
+    rowCount,
+    columnCount: colCount,
+    rowData,
+    columnData,
+    cellData: {},
+    mergeData: [],
+    styles: {
+      [DEFAULT_STYLE_ID]: { ...DEFAULT_CELL_STYLE },
+      [HEADER_STYLE_ID]: { ...HEADER_CELL_STYLE },
+    },
+    defaultStyle: DEFAULT_STYLE_ID,
     fontSize: DEFAULT_TABLE.fontSize,
     fontFamily: DEFAULT_TABLE.fontFamily,
     color: DEFAULT_TABLE.color,
@@ -144,120 +664,92 @@ export function createTableConfig(
   }
 }
 
-/** Validate a table config coming from storage / import and fill defaults. */
+/** Validate a table snapshot from storage / import and migrate v1 tables. */
 export function normalizeTableConfig(input: unknown): TableConfig {
-  const raw = (input && typeof input === 'object' ? input : {}) as Partial<TableConfig>
-  const rows = clampRows(raw.rows)
-  const cols = clampCols(raw.cols)
+  const raw = (input && typeof input === 'object' ? input : {}) as any
+  return isVersion1(raw) ? normalizeV1(raw) : normalizeV2(raw)
+}
 
-  const rowHeights = Array.from({ length: rows }, (_, index) => {
-    const value = Number(raw.rowHeights?.[index])
-    return Number.isFinite(value) && value > 0
-      ? round(clamp(value, 0.5, 500), 2)
-      : DEFAULT_TABLE.rowHeight
-  })
-  const colWidths = Array.from({ length: cols }, (_, index) => {
-    const value = Number(raw.colWidths?.[index])
-    return Number.isFinite(value) && value > 0
-      ? round(clamp(value, 0.5, 1000), 2)
-      : DEFAULT_TABLE.colWidth
-  })
-
-  const cells = Array.from({ length: rows }, (_, row) =>
-    Array.from({ length: cols }, (_, col) =>
-      cloneCell(raw.cells?.[row]?.[col] as TableCell | undefined, row),
-    ),
+export function getRowHeight(config: TableConfig, row: number): number {
+  return readDimension(
+    config.rowData[row]?.h,
+    0.5,
+    500,
+    DEFAULT_TABLE.rowHeight,
   )
+}
 
-  // Reject merges that are out of bounds or overlap an already accepted merge.
-  const merges: TableMerge[] = []
-  const seen = new Set<string>()
-  for (const candidate of raw.merges ?? []) {
-    if (!candidate) continue
-    const row = Math.round(Number(candidate.row))
-    const col = Math.round(Number(candidate.col))
-    const rowSpan = Math.round(Number(candidate.rowSpan))
-    const colSpan = Math.round(Number(candidate.colSpan))
-    if (
-      !Number.isFinite(row) ||
-      !Number.isFinite(col) ||
-      !Number.isFinite(rowSpan) ||
-      !Number.isFinite(colSpan)
-    ) {
-      continue
-    }
-    if (row < 0 || col < 0) continue
-    if (rowSpan < 1 || colSpan < 1) continue
-    if (row + rowSpan > rows || col + colSpan > cols) continue
-    if (rowSpan === 1 && colSpan === 1) continue
-    let overlaps = false
-    for (let r = row; r < row + rowSpan && !overlaps; r += 1) {
-      for (let c = col; c < col + colSpan; c += 1) {
-        if (seen.has(`${r},${c}`)) {
-          overlaps = true
-          break
-        }
-      }
-    }
-    if (overlaps) continue
-    for (let r = row; r < row + rowSpan; r += 1) {
-      for (let c = col; c < col + colSpan; c += 1) seen.add(`${r},${c}`)
-    }
-    merges.push({ row, col, rowSpan, colSpan })
-  }
-  merges.sort((a, b) => a.row - b.row || a.col - b.col)
+export function getColumnWidth(config: TableConfig, col: number): number {
+  return readDimension(
+    config.columnData[col]?.w,
+    0.5,
+    1000,
+    DEFAULT_TABLE.colWidth,
+  )
+}
 
-  return {
-    rows,
-    cols,
-    rowHeights,
-    colWidths,
-    cells,
-    merges,
-    fontSize: Number.isFinite(Number(raw.fontSize))
-      ? round(clamp(Number(raw.fontSize), 0.5, 300 * PX_TO_MM), 2)
-      : DEFAULT_TABLE.fontSize,
-    fontFamily:
-      typeof raw.fontFamily === 'string' && raw.fontFamily
-        ? raw.fontFamily
-        : DEFAULT_TABLE.fontFamily,
-    color:
-      typeof raw.color === 'string' && raw.color
-        ? raw.color
-        : DEFAULT_TABLE.color,
-    borderColor:
-      typeof raw.borderColor === 'string' && raw.borderColor
-        ? raw.borderColor
-        : DEFAULT_TABLE.borderColor,
-    borderWidth: Number.isFinite(Number(raw.borderWidth))
-      ? round(clamp(Number(raw.borderWidth), 0, 5), 2)
-      : DEFAULT_TABLE.borderWidth,
-    padding: Number.isFinite(Number(raw.padding))
-      ? round(clamp(Number(raw.padding), 0, 20), 2)
-      : DEFAULT_TABLE.padding,
-    background:
-      typeof raw.background === 'string' && raw.background
-        ? raw.background
-        : DEFAULT_TABLE.background,
-  }
+export function getRowHeights(config: TableConfig): number[] {
+  return Array.from({ length: config.rowCount }, (_, row) =>
+    getRowHeight(config, row),
+  )
+}
+
+export function getColumnWidths(config: TableConfig): number[] {
+  return Array.from({ length: config.columnCount }, (_, col) =>
+    getColumnWidth(config, col),
+  )
 }
 
 export function getTableWidth(config: TableConfig): number {
   return round(
-    config.colWidths.reduce((sum, value) => sum + value, 0),
+    getColumnWidths(config).reduce((sum, value) => sum + value, 0),
     2,
   )
 }
 
 export function getTableHeight(config: TableConfig): number {
   return round(
-    config.rowHeights.reduce((sum, value) => sum + value, 0),
+    getRowHeights(config).reduce((sum, value) => sum + value, 0),
     2,
   )
 }
 
-export function getTableSize(config: TableConfig): { width: number; height: number } {
+export function getTableSize(config: TableConfig): {
+  width: number
+  height: number
+} {
   return { width: getTableWidth(config), height: getTableHeight(config) }
+}
+
+/** Style inherited from the base style and the row default, without the cell. */
+export function getRowBaseStyle(
+  config: TableConfig,
+  row: number,
+): TableCellStyle {
+  return rowBaseStyle(
+    config.styles,
+    config.defaultStyle,
+    config.rowData,
+    row,
+  )
+}
+
+export function getCellStyle(
+  config: TableConfig,
+  row: number,
+  col: number,
+): TableCellStyle {
+  const base = getRowBaseStyle(config, row)
+  const styleId = config.cellData[row]?.[col]?.s
+  return mergeStyles(base, styleId ? config.styles[styleId] : undefined)
+}
+
+export function getCellValue(
+  config: TableConfig,
+  row: number,
+  col: number,
+): string {
+  return config.cellData[row]?.[col]?.v ?? ''
 }
 
 function axisOffsets(sizes: number[]): number[] {
@@ -270,24 +762,28 @@ function axisOffsets(sizes: number[]): number[] {
 
 /** All visible regions, including merged cells at their anchor position. */
 export function buildRegions(config: TableConfig): TableRegion[] {
-  const xs = axisOffsets(config.colWidths)
-  const ys = axisOffsets(config.rowHeights)
-  const mergeAt = new Map<string, TableMerge>()
-  for (const merge of config.merges) {
-    for (let row = merge.row; row < merge.row + merge.rowSpan; row += 1) {
-      for (let col = merge.col; col < merge.col + merge.colSpan; col += 1) {
+  const sizes = getColumnWidths(config)
+  const rowSizes = getRowHeights(config)
+  const xs = axisOffsets(sizes)
+  const ys = axisOffsets(rowSizes)
+  const mergeAt = new Map<string, TableMergeData>()
+  for (const merge of config.mergeData) {
+    for (let row = merge.startRow; row <= merge.endRow; row += 1) {
+      for (let col = merge.startColumn; col <= merge.endColumn; col += 1) {
         mergeAt.set(`${row},${col}`, merge)
       }
     }
   }
 
   const regions: TableRegion[] = []
-  for (let row = 0; row < config.rows; row += 1) {
-    for (let col = 0; col < config.cols; col += 1) {
+  for (let row = 0; row < config.rowCount; row += 1) {
+    for (let col = 0; col < config.columnCount; col += 1) {
       const merge = mergeAt.get(`${row},${col}`)
-      if (merge && (merge.row !== row || merge.col !== col)) continue
-      const rowSpan = merge?.rowSpan ?? 1
-      const colSpan = merge?.colSpan ?? 1
+      if (merge && (merge.startRow !== row || merge.startColumn !== col)) {
+        continue
+      }
+      const rowSpan = merge ? merge.endRow - merge.startRow + 1 : 1
+      const colSpan = merge ? merge.endColumn - merge.startColumn + 1 : 1
       regions.push({
         row,
         col,
@@ -320,13 +816,41 @@ export function rangeCellCount(range: TableRange): number {
   )
 }
 
-export function mergeIntersectsRange(merge: TableMerge, range: TableRange): boolean {
+export function mergeToRange(merge: TableMergeData): TableRange {
+  return {
+    row: merge.startRow,
+    col: merge.startColumn,
+    endRow: merge.endRow,
+    endCol: merge.endColumn,
+  }
+}
+
+export function mergeIntersectsRange(
+  merge: TableMergeData,
+  range: TableRange,
+): boolean {
   const normalized = normalizeRange(range)
   return !(
-    merge.row + merge.rowSpan - 1 < normalized.row ||
-    merge.row > normalized.endRow ||
-    merge.col + merge.colSpan - 1 < normalized.col ||
-    merge.col > normalized.endCol
+    merge.endRow < normalized.row ||
+    merge.startRow > normalized.endRow ||
+    merge.endColumn < normalized.col ||
+    merge.startColumn > normalized.endCol
+  )
+}
+
+export function findMergeContaining(
+  config: TableConfig,
+  row: number,
+  col: number,
+): TableMergeData | null {
+  return (
+    config.mergeData.find(
+      (merge) =>
+        row >= merge.startRow &&
+        row <= merge.endRow &&
+        col >= merge.startColumn &&
+        col <= merge.endColumn,
+    ) ?? null
   )
 }
 
@@ -340,16 +864,14 @@ export function expandRangeToMerges(
   let changed = true
   while (changed) {
     changed = false
-    for (const merge of config.merges) {
-      if (
-        !mergeIntersectsRange(merge, { row, col, endRow, endCol })
-      ) {
+    for (const merge of config.mergeData) {
+      if (!mergeIntersectsRange(merge, { row, col, endRow, endCol })) {
         continue
       }
-      const nextRow = Math.min(row, merge.row)
-      const nextCol = Math.min(col, merge.col)
-      const nextEndRow = Math.max(endRow, merge.row + merge.rowSpan - 1)
-      const nextEndCol = Math.max(endCol, merge.col + merge.colSpan - 1)
+      const nextRow = Math.min(row, merge.startRow)
+      const nextCol = Math.min(col, merge.startColumn)
+      const nextEndRow = Math.max(endRow, merge.endRow)
+      const nextEndCol = Math.max(endCol, merge.endColumn)
       if (
         nextRow !== row ||
         nextCol !== col ||
@@ -367,52 +889,96 @@ export function expandRangeToMerges(
   return { row, col, endRow, endCol }
 }
 
-export function rangeToMerge(range: TableRange): TableMerge {
+export function rangeToMerge(range: TableRange): TableMergeData {
   const normalized = normalizeRange(range)
   return {
-    row: normalized.row,
-    col: normalized.col,
-    rowSpan: normalized.endRow - normalized.row + 1,
-    colSpan: normalized.endCol - normalized.col + 1,
+    startRow: normalized.row,
+    endRow: normalized.endRow,
+    startColumn: normalized.col,
+    endColumn: normalized.endCol,
   }
 }
 
-export function mergeRegion(config: TableConfig, range: TableRange): TableConfig {
+export function mergeRegion(
+  config: TableConfig,
+  range: TableRange,
+): TableConfig {
   const expanded = expandRangeToMerges(config, range)
   if (rangeCellCount(expanded) <= 1) return cloneTableConfig(config)
   const next = cloneTableConfig(config)
-  next.merges = next.merges.filter(
+  next.mergeData = next.mergeData.filter(
     (merge) => !mergeIntersectsRange(merge, expanded),
   )
-  next.merges.push(rangeToMerge(expanded))
-  next.merges.sort((a, b) => a.row - b.row || a.col - b.col)
+  next.mergeData.push(rangeToMerge(expanded))
+  next.mergeData.sort(
+    (a, b) => a.startRow - b.startRow || a.startColumn - b.startColumn,
+  )
   for (let row = expanded.row; row <= expanded.endRow; row += 1) {
     for (let col = expanded.col; col <= expanded.endCol; col += 1) {
       if (row === expanded.row && col === expanded.col) continue
-      // Keep the covered cell's styles but hide its content; splitting the
-      // region later brings the styled cells back without duplicate text.
-      next.cells[row][col] = sanitizeCell(
-        { ...next.cells[row][col], text: '' },
-        row,
-      )
+      // Keep the covered cell's style but hide its content; splitting the
+      // region brings the styled cells back without duplicate text.
+      setCellValue(next, row, col, '')
     }
   }
+  pruneStyles(next)
   return next
 }
 
-export function hasMergeInRange(config: TableConfig, range: TableRange): boolean {
-  return config.merges.some((merge) => mergeIntersectsRange(merge, range))
+export function hasMergeInRange(
+  config: TableConfig,
+  range: TableRange,
+): boolean {
+  return config.mergeData.some((merge) =>
+    mergeIntersectsRange(merge, range),
+  )
 }
 
-export function splitRegion(config: TableConfig, range: TableRange): TableConfig {
+export function splitRegion(
+  config: TableConfig,
+  range: TableRange,
+): TableConfig {
   const expanded = expandRangeToMerges(config, range)
   const next = cloneTableConfig(config)
-  next.merges = next.merges.filter(
+  next.mergeData = next.mergeData.filter(
     (merge) => !mergeIntersectsRange(merge, expanded),
   )
+  pruneStyles(next)
   return next
 }
 
+function regionLookup(config: TableConfig): Map<string, TableRegion> {
+  const lookup = new Map<string, TableRegion>()
+  for (const region of buildRegions(config)) {
+    for (let row = region.row; row < region.row + region.rowSpan; row += 1) {
+      for (let col = region.col; col < region.col + region.colSpan; col += 1) {
+        lookup.set(`${row},${col}`, region)
+      }
+    }
+  }
+  return lookup
+}
+
+function stylePatchOf(patch: Partial<TableCell>): TableCellStyle {
+  const style: TableCellStyle = {}
+  if (patch.align !== undefined) style.align = patch.align
+  if (patch.valign !== undefined) style.valign = patch.valign
+  if (patch.bold !== undefined) style.bold = patch.bold
+  if (patch.fill !== undefined) style.fill = patch.fill
+  if (patch.color !== undefined) style.color = patch.color
+  if (patch.borderTop !== undefined) style.borderTop = patch.borderTop
+  if (patch.borderRight !== undefined) style.borderRight = patch.borderRight
+  if (patch.borderBottom !== undefined) {
+    style.borderBottom = patch.borderBottom
+  }
+  if (patch.borderLeft !== undefined) style.borderLeft = patch.borderLeft
+  return style
+}
+
+/**
+ * Update text and/or style for every visible region overlapped by `range`.
+ * Covered cells of a merge are skipped; the merge anchor receives the change.
+ */
 export function updateCells(
   config: TableConfig,
   range: TableRange,
@@ -420,26 +986,41 @@ export function updateCells(
 ): TableConfig {
   const next = cloneTableConfig(config)
   const normalized = normalizeRange(range)
-  for (let row = normalized.row; row <= normalized.endRow; row += 1) {
-    for (let col = normalized.col; col <= normalized.endCol; col += 1) {
-      const existing = next.cells[row]?.[col]
-      if (!existing) continue
-      const merged = { ...existing, ...patch }
-      if (!('text' in patch) && typeof existing.text === 'string') {
-        merged.text = existing.text
-      }
-      next.cells[row][col] = sanitizeCell(merged, row)
+  const hasText = patch.text !== undefined
+  const stylePatch = stylePatchOf(patch)
+  const hasStyle = Object.keys(stylePatch).length > 0
+  if (!hasText && !hasStyle) return next
+
+  const top = clamp(normalized.row, 0, next.rowCount - 1)
+  const bottom = clamp(normalized.endRow, 0, next.rowCount - 1)
+  const left = clamp(normalized.col, 0, next.columnCount - 1)
+  const right = clamp(normalized.endCol, 0, next.columnCount - 1)
+  const lookup = regionLookup(next)
+  const anchors = new Map<string, TableRegion>()
+  for (let row = top; row <= bottom; row += 1) {
+    for (let col = left; col <= right; col += 1) {
+      const region = lookup.get(`${row},${col}`)
+      if (region) anchors.set(`${region.row},${region.col}`, region)
     }
   }
+
+  for (const region of anchors.values()) {
+    if (hasText) setCellValue(next, region.row, region.col, patch.text ?? '')
+    if (hasStyle) {
+      const style = mergeStyles(
+        getCellStyle(next, region.row, region.col),
+        stylePatch,
+      )
+      setCellStyle(next, region.row, region.col, style)
+    }
+  }
+  pruneStyles(next)
   return next
 }
 
 export type TableBorderSide = 'top' | 'right' | 'bottom' | 'left'
 
-const BORDER_FLAG: Record<
-  TableBorderSide,
-  'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft'
-> = {
+const BORDER_FLAG: Record<TableBorderSide, keyof TableCellStyle> = {
   top: 'borderTop',
   right: 'borderRight',
   bottom: 'borderBottom',
@@ -454,30 +1035,10 @@ const OPPOSITE_SIDE: Record<TableBorderSide, TableBorderSide> = {
 }
 
 export function cellBorderVisible(
-  cell: TableCell | undefined,
+  cell: TableCell | TableCellStyle | undefined,
   side: TableBorderSide,
 ): boolean {
   return cell?.[BORDER_FLAG[side]] !== false
-}
-
-/** Map every grid coordinate to the visible region that owns it. */
-function regionLookup(config: TableConfig): Map<string, TableRegion> {
-  const lookup = new Map<string, TableRegion>()
-  for (const region of buildRegions(config)) {
-    for (let row = region.row; row < region.row + region.rowSpan; row += 1) {
-      for (let col = region.col; col < region.col + region.colSpan; col += 1) {
-        lookup.set(`${row},${col}`, region)
-      }
-    }
-  }
-  return lookup
-}
-
-function regionCell(
-  config: TableConfig,
-  region: TableRegion,
-): TableCell | undefined {
-  return config.cells[region.row]?.[region.col]
 }
 
 /**
@@ -497,7 +1058,11 @@ export function rangeBorderState(
     left: true,
   }
   const sideOn = (region: TableRegion | undefined, side: TableBorderSide) =>
-    !region || cellBorderVisible(regionCell(config, region), side)
+    !region ||
+    cellBorderVisible(
+      getCellStyle(config, region.row, region.col),
+      side,
+    )
 
   for (let row = expanded.row; row <= expanded.endRow; row += 1) {
     const leftInside = lookup.get(`${row},${expanded.col}`)
@@ -509,7 +1074,7 @@ export function rangeBorderState(
 
     const rightInside = lookup.get(`${row},${expanded.endCol}`)
     const rightOutside =
-      expanded.endCol < config.cols - 1
+      expanded.endCol < config.columnCount - 1
         ? lookup.get(`${row},${expanded.endCol + 1}`)
         : undefined
     if (!sideOn(rightInside, 'right') || !sideOn(rightOutside, 'left')) {
@@ -527,7 +1092,7 @@ export function rangeBorderState(
 
     const bottomInside = lookup.get(`${expanded.endRow},${col}`)
     const bottomOutside =
-      expanded.endRow < config.rows - 1
+      expanded.endRow < config.rowCount - 1
         ? lookup.get(`${expanded.endRow + 1},${col}`)
         : undefined
     if (!sideOn(bottomInside, 'bottom') || !sideOn(bottomOutside, 'top')) {
@@ -560,17 +1125,17 @@ export function setRangeBorder(
     on: boolean,
   ) => {
     if (!region) return
-    const cell = next.cells[region.row]?.[region.col]
-    if (!cell) return
-    const flag = BORDER_FLAG[target]
-    if (on) delete cell[flag]
-    else cell[flag] = false
+    const style: TableCellStyle = {
+      ...getCellStyle(next, region.row, region.col),
+      [BORDER_FLAG[target]]: on,
+    }
+    setCellStyle(next, region.row, region.col, style)
   }
 
   if (side === 'top' || side === 'bottom') {
     const insideRow = side === 'top' ? expanded.row : expanded.endRow
     const outsideRow = side === 'top' ? expanded.row - 1 : expanded.endRow + 1
-    const hasOutside = outsideRow >= 0 && outsideRow < next.rows
+    const hasOutside = outsideRow >= 0 && outsideRow < next.rowCount
     for (let col = expanded.col; col <= expanded.endCol; col += 1) {
       apply(lookup.get(`${insideRow},${col}`), side, visible)
       if (visible && hasOutside) {
@@ -580,7 +1145,7 @@ export function setRangeBorder(
   } else {
     const insideCol = side === 'left' ? expanded.col : expanded.endCol
     const outsideCol = side === 'left' ? expanded.col - 1 : expanded.endCol + 1
-    const hasOutside = outsideCol >= 0 && outsideCol < next.cols
+    const hasOutside = outsideCol >= 0 && outsideCol < next.columnCount
     for (let row = expanded.row; row <= expanded.endRow; row += 1) {
       apply(lookup.get(`${row},${insideCol}`), side, visible)
       if (visible && hasOutside) {
@@ -589,6 +1154,7 @@ export function setRangeBorder(
     }
   }
 
+  pruneStyles(next)
   return next
 }
 
@@ -599,84 +1165,109 @@ export function resizeTable(
 ): TableConfig {
   const nextRows = clampRows(rows)
   const nextCols = clampCols(cols)
-  if (nextRows === config.rows && nextCols === config.cols) {
+  if (nextRows === config.rowCount && nextCols === config.columnCount) {
     return cloneTableConfig(config)
   }
-  const next = cloneTableConfig(config)
-  const avgRowHeight =
-    config.rowHeights.reduce((sum, value) => sum + value, 0) /
-    Math.max(1, config.rowHeights.length)
-  const avgColWidth =
-    config.colWidths.reduce((sum, value) => sum + value, 0) /
-    Math.max(1, config.colWidths.length)
 
-  next.rowHeights = Array.from(
-    { length: nextRows },
-    (_, index) => config.rowHeights[index] ?? round(avgRowHeight, 2),
+  const rowHeights = getRowHeights(config)
+  const columnWidths = getColumnWidths(config)
+  const avgRowHeight =
+    rowHeights.reduce((sum, value) => sum + value, 0) /
+    Math.max(1, rowHeights.length)
+  const avgColWidth =
+    columnWidths.reduce((sum, value) => sum + value, 0) /
+    Math.max(1, columnWidths.length)
+
+  const next = cloneTableConfig(config)
+  const rowData: Record<number, TableRowData> = {}
+  for (let row = 0; row < nextRows; row += 1) {
+    const existing = config.rowData[row]
+    rowData[row] = existing?.s
+      ? { h: existing.h ?? round(avgRowHeight, 2), s: existing.s }
+      : { h: existing?.h ?? round(avgRowHeight, 2) }
+  }
+  const columnData: Record<number, TableColumnData> = {}
+  for (let col = 0; col < nextCols; col += 1) {
+    columnData[col] = {
+      w: config.columnData[col]?.w ?? round(avgColWidth, 2),
+    }
+  }
+
+  for (const rowKey of Object.keys(next.cellData)) {
+    const row = Number(rowKey)
+    if (row >= nextRows) {
+      delete next.cellData[row]
+      continue
+    }
+    for (const colKey of Object.keys(next.cellData[row] ?? {})) {
+      if (Number(colKey) >= nextCols) delete next.cellData[row][Number(colKey)]
+    }
+    if (!Object.keys(next.cellData[row] ?? {}).length) delete next.cellData[row]
+  }
+
+  next.rowCount = nextRows
+  next.columnCount = nextCols
+  next.rowData = rowData
+  next.columnData = columnData
+  next.mergeData = config.mergeData.filter(
+    (merge) => merge.endRow < nextRows && merge.endColumn < nextCols,
   )
-  next.colWidths = Array.from(
-    { length: nextCols },
-    (_, index) => config.colWidths[index] ?? round(avgColWidth, 2),
-  )
-  next.cells = Array.from({ length: nextRows }, (_, row) =>
-    Array.from({ length: nextCols }, (_, col) =>
-      cloneCell(config.cells[row]?.[col], row),
-    ),
-  )
-  next.rows = nextRows
-  next.cols = nextCols
-  next.merges = config.merges.filter(
-    (merge) =>
-      merge.row + merge.rowSpan <= nextRows &&
-      merge.col + merge.colSpan <= nextCols,
-  )
+  pruneStyles(next)
   return next
 }
 
-export function setTableWidth(config: TableConfig, width: number): TableConfig {
+export function setTableWidth(
+  config: TableConfig,
+  width: number,
+): TableConfig {
   const current = getTableWidth(config)
   const target = Math.max(2, width)
   if (current <= 0) return cloneTableConfig(config)
   const factor = target / current
-  const next = cloneTableConfig(config)
-  next.colWidths = next.colWidths.map((value) =>
+  const widths = getColumnWidths(config).map((value) =>
     Math.max(0.5, round(value * factor, 2)),
   )
-  // Absorb rounding drift into the last column so the table width matches.
   const drift = round(
-    target - next.colWidths.reduce((sum, value) => sum + value, 0),
+    target - widths.reduce((sum, value) => sum + value, 0),
     2,
   )
-  const last = next.colWidths.length - 1
+  const last = widths.length - 1
   if (last >= 0) {
-    next.colWidths[last] = round(
-      Math.max(0.5, next.colWidths[last] + drift),
-      2,
-    )
+    widths[last] = round(Math.max(0.5, widths[last] + drift), 2)
   }
+  const next = cloneTableConfig(config)
+  next.columnData = {}
+  widths.forEach((value, col) => {
+    next.columnData[col] = { w: value }
+  })
   return next
 }
 
-export function setTableHeight(config: TableConfig, height: number): TableConfig {
+export function setTableHeight(
+  config: TableConfig,
+  height: number,
+): TableConfig {
   const current = getTableHeight(config)
   const target = Math.max(1, height)
   if (current <= 0) return cloneTableConfig(config)
   const factor = target / current
-  const next = cloneTableConfig(config)
-  next.rowHeights = next.rowHeights.map((value) =>
+  const heights = getRowHeights(config).map((value) =>
     Math.max(0.5, round(value * factor, 2)),
   )
   const drift = round(
-    target - next.rowHeights.reduce((sum, value) => sum + value, 0),
+    target - heights.reduce((sum, value) => sum + value, 0),
     2,
   )
-  const last = next.rowHeights.length - 1
+  const last = heights.length - 1
   if (last >= 0) {
-    next.rowHeights[last] = round(
-      Math.max(0.5, next.rowHeights[last] + drift),
-      2,
-    )
+    heights[last] = round(Math.max(0.5, heights[last] + drift), 2)
   }
+  const next = cloneTableConfig(config)
+  next.rowData = {}
+  heights.forEach((value, row) => {
+    const styleId = config.rowData[row]?.s
+    next.rowData[row] = styleId ? { h: value, s: styleId } : { h: value }
+  })
   return next
 }
 
@@ -689,12 +1280,21 @@ export function rangeLabel(range: TableRange): string {
 
 export function isRangeSingleCell(range: TableRange): boolean {
   const normalized = normalizeRange(range)
-  return normalized.row === normalized.endRow && normalized.col === normalized.endCol
+  return (
+    normalized.row === normalized.endRow && normalized.col === normalized.endCol
+  )
 }
 
 /** The cell shown for a given coordinate, even when it is covered by a merge. */
-export function cellAt(config: TableConfig, row: number, col: number): TableCell {
-  return config.cells[row]?.[col] ?? { align: 'left', valign: 'middle' }
+export function cellAt(
+  config: TableConfig,
+  row: number,
+  col: number,
+): TableCell {
+  return {
+    text: getCellValue(config, row, col),
+    ...getCellStyle(config, row, col),
+  }
 }
 
 /** The visible region containing a coordinate (a merged region or a cell). */
@@ -724,20 +1324,22 @@ export function cellAtPoint(
   const height = getTableHeight(config)
   if (x < 0 || y < 0 || x > width || y > height) return null
 
-  let col = config.cols - 1
+  const widths = getColumnWidths(config)
+  const heights = getRowHeights(config)
+  let col = config.columnCount - 1
   let cursor = 0
-  for (let index = 0; index < config.cols; index += 1) {
-    cursor += config.colWidths[index]
+  for (let index = 0; index < config.columnCount; index += 1) {
+    cursor += widths[index]
     if (x < cursor) {
       col = index
       break
     }
   }
 
-  let row = config.rows - 1
+  let row = config.rowCount - 1
   cursor = 0
-  for (let index = 0; index < config.rows; index += 1) {
-    cursor += config.rowHeights[index]
+  for (let index = 0; index < config.rowCount; index += 1) {
+    cursor += heights[index]
     if (y < cursor) {
       row = index
       break
@@ -747,4 +1349,4 @@ export function cellAtPoint(
   return { row, col }
 }
 
-export type { TableAlign, TableVAlign }
+export type { TableAlign, TableCell, TableVAlign }

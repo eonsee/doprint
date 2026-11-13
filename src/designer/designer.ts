@@ -5,6 +5,7 @@ import {
   Ellipse,
   FabricImage,
   FabricObject,
+  Point,
   Rect,
   StaticCanvas,
   Textbox,
@@ -40,11 +41,13 @@ import {
   cloneTableConfig,
   createTableConfig,
   expandRangeToMerges,
+  findMergeContaining,
   getTableHeight,
   getTableSize,
   getTableWidth,
   hasMergeInRange,
   mergeRegion,
+  mergeToRange,
   normalizeTableConfig,
   rangeBorderState,
   rangeCellCount,
@@ -60,6 +63,7 @@ import {
   type TableRange,
 } from './table'
 import { buildTableObject } from './tableFabric'
+import { drawTableSelection } from './tableOverlay'
 import { createPdfFromImage, previewPixelRatio } from './pdf'
 
 const STORAGE_KEY = 'doprint.template.v1'
@@ -216,23 +220,51 @@ function dashArrayOf(value: unknown): number[] {
     .map((n) => round(n, 2))
 }
 
+/**
+ * A line's thickness is a property, not a vertical scale. Keep only the two
+ * length handles (plus rotation) so dragging can never make it thicker; the
+ * inspector changes the height / thickness numerically.
+ */
+function configureLineHandles(obj: FabricObject, locked: boolean) {
+  const anyObj = obj as any
+  anyObj.set({ lockScalingY: true })
+  anyObj.setControlsVisibility?.({
+    mt: false,
+    mb: false,
+    tl: false,
+    tr: false,
+    bl: false,
+    br: false,
+    ml: !locked,
+    mr: !locked,
+    mtr: !locked,
+  })
+}
+
 /** Lock movement / scaling / rotation while keeping the object selectable. */
 function applyLock(obj: FabricObject, locked: boolean) {
   const anyObj = obj as any
   const table = isTableObject(obj)
+  const line = kindOf(obj) === 'line'
   anyObj.locked = locked
   obj.set({
     lockMovementX: locked,
     lockMovementY: locked,
-    // Tables are resized through their panel; scaling handles would break the
-    // stored row / column sizes, so they are always disabled.
-    lockRotation: table ? true : locked,
-    lockScalingX: table ? true : locked,
-    lockScalingY: table ? true : locked,
-    hasControls: table ? false : !locked,
+    // Every element, including tables, can be rotated. Table scaling is baked
+    // into row heights / column widths on release so rotation stays clean.
+    lockRotation: locked,
+    lockScalingX: locked,
+    lockScalingY: line ? true : locked,
+    lockScalingFlip: table || line,
+    hasControls: !locked,
     hasBorders: true,
     hoverCursor: locked ? 'default' : 'move',
   } as any)
+  if (line) configureLineHandles(obj, locked)
+  if (table) {
+    // Older tables may still carry a hidden rotation handle in memory.
+    anyObj.setControlsVisibility?.({ mtr: !locked })
+  }
   if (isTextType(typeOf(obj))) anyObj.set('editable', !locked)
   obj.setCoords()
 }
@@ -342,15 +374,20 @@ export function createDesigner() {
     col: number
     selectAll: boolean
   } | null>(null)
-  /** Top-left position / size of the selected table in millimetres. */
+  /** Scene frame of the selected table in millimetres. */
   const tableFrame = reactive({
     left: 0,
     top: 0,
+    centerX: 0,
+    centerY: 0,
     width: 0,
     height: 0,
+    angle: 0,
   })
   let tableElementId = ''
   let rebuildingTable = false
+  /** True while dragging a cell range on the Fabric canvas. */
+  let tablePointerSelecting = false
 
   let canvas: Canvas | null = null
   let viewportWidth = 0
@@ -431,11 +468,25 @@ export function createDesigner() {
       if (restoring) return
       const target = e.target as FabricObject | undefined
       if (target && !isActiveSelectionType(typeOf(target))) {
-        bakeTransform(target)
+        if (isTableObject(target)) {
+          // Fabric's scaling handles stretch the rendered group. On release,
+          // bake that stretch into the table snapshot and rebuild cleanly.
+          resizeTableObject(target, e)
+        } else {
+          bakeTransform(target)
+        }
       }
       refreshSelection()
       refreshLayers()
       scheduleCommit()
+    })
+
+    c.on('object:scaling', (e: any) => {
+      const target = e.target as FabricObject | undefined
+      if (!target || !isTableObject(target)) return
+      // Keep the inspector's frame and the inline overlay in sync while the
+      // Fabric controls are being dragged.
+      refreshSelection()
     })
 
     c.on('object:moving', (e: any) => {
@@ -455,11 +506,63 @@ export function createDesigner() {
       scheduleCommit()
     })
 
+    // The cell range is painted by Fabric on the lower canvas. This handler
+    // only rewrites the reactive selection state.
+    c.on('after:render', (event: any) => {
+      if (event.ctx !== (c as any).contextContainer) return
+      if (!tableEditing.value || !table.value) return
+      const active = c.getActiveObject()
+      if (!active || !isTableObject(active)) return
+      drawTableSelection(
+        event.ctx,
+        table.value,
+        tableSelection,
+        view.zoom,
+        (active as any).left ?? 0,
+        (active as any).top ?? 0,
+        (active as any).angle ?? 0,
+      )
+    })
+
     c.on('mouse:down', (e: any) => {
       if (!tableEditing.value) return
-      // The HTML cell layer swallows clicks inside the table. Reaching the
-      // canvas means the click landed outside it, so leave cell edit mode.
-      if (!e.target || !isTableObject(e.target)) endTableEdit()
+      const target = e.target as FabricObject | undefined
+      if (!target || !isTableObject(target)) {
+        // Clicking the page or another element leaves cell editing.
+        endTableEdit()
+        return
+      }
+      if (target !== c.getActiveObject()) {
+        endTableEdit()
+        return
+      }
+      const cell = tableCellAtEvent(target, e)
+      if (!cell) return
+      ;(e.e as MouseEvent | undefined)?.preventDefault?.()
+      tablePointerSelecting = true
+      selectTableCells(
+        cell.row,
+        cell.col,
+        !!(e.e as MouseEvent | undefined)?.shiftKey,
+      )
+      const stop = () => {
+        tablePointerSelecting = false
+        window.removeEventListener('pointerup', stop)
+      }
+      window.addEventListener('pointerup', stop)
+    })
+
+    c.on('mouse:move', (e: any) => {
+      if (!tablePointerSelecting || !tableEditing.value) return
+      const target = e.target as FabricObject | undefined
+      if (!target || !isTableObject(target)) return
+      const cell = tableCellAtEvent(target, e)
+      if (!cell) return
+      selectTableCells(cell.row, cell.col, true)
+    })
+
+    c.on('mouse:up', () => {
+      tablePointerSelecting = false
     })
 
     // Fabric's built-in "click again to edit" can be blocked by resize
@@ -469,20 +572,16 @@ export function createDesigner() {
     c.on('mouse:dblclick', (e: any) => {
       const target = e.target
       if (target && isTableObject(target)) {
-        const config = tableConfigOf(target)
-        if (!config) return
-        c.setActiveObject(target)
-        tableElementId = String((target as any).elementId ?? '')
-        table.value = cloneTableConfig(config)
-        refreshSelection()
-        beginTableEdit()
-        const point =
-          e.scenePoint ??
-          (e.e ? c.getScenePoint(e.e) : null)
-        const cell = point
-          ? tableCellAtScene(target, config, point.x, point.y)
-          : null
-        if (cell) requestTableCellEdit(cell.row, cell.col, true)
+        if (!tableEditing.value || c.getActiveObject() !== target) {
+          c.setActiveObject(target)
+          tableElementId = String((target as any).elementId ?? '')
+          table.value = cloneTableConfig(tableConfigOf(target) ?? createTableConfig())
+          refreshSelection()
+          beginTableEdit()
+        }
+        const config = table.value ?? tableConfigOf(target)
+        const cell = config ? tableCellAtEvent(target, e) : null
+        if (config && cell) requestTableCellEdit(cell.row, cell.col, true)
         return
       }
       if (!target || !isTextType(typeOf(target)) || target.isEditing) return
@@ -493,19 +592,48 @@ export function createDesigner() {
     })
   }
 
-  /** Convert a scene point to a table cell coordinate. */
+  /** Read the scene point attached to a Fabric pointer event. */
+  function scenePointOfEvent(event: any): { x: number; y: number } | null {
+    if (event?.scenePoint) return event.scenePoint
+    const native = event?.e
+    if (!canvas || !native) return null
+    return canvas.getScenePoint(native)
+  }
+
+  function tableCellAtEvent(
+    obj: FabricObject,
+    event: any,
+  ): { row: number; col: number } | null {
+    const config = tableConfigOf(obj)
+    const point = scenePointOfEvent(event)
+    if (!config || !point) return null
+    return tableCellAtScene(obj, config, point.x, point.y)
+  }
+
+  /** Convert a scene point to a table cell coordinate, including rotation. */
   function tableCellAtScene(
     obj: FabricObject,
     config: TableConfig,
     x: number,
     y: number,
   ): { row: number; col: number } | null {
-    if (Math.abs((obj as any).angle ?? 0) > 0.01) return null
-    const scaleX = Math.abs((obj as any).scaleX ?? 1) || 1
-    const scaleY = Math.abs((obj as any).scaleY ?? 1) || 1
-    const left = (obj as any).left ?? 0
-    const top = (obj as any).top ?? 0
-    return cellAtPoint(config, (x - left) / scaleX, (y - top) / scaleY)
+    const anyObj = obj as any
+    const scaleX = Math.abs(anyObj.scaleX ?? 1) || 1
+    const scaleY = Math.abs(anyObj.scaleY ?? 1) || 1
+    const width = getTableWidth(config) * scaleX
+    const height = getTableHeight(config) * scaleY
+    const angle = ((anyObj.angle ?? 0) * Math.PI) / 180
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
+    // Fabric's left/top is the rotated local origin; the rotation happens
+    // around the local box centre.
+    const centerX = (anyObj.left ?? 0) + (cos * width) / 2 - (sin * height) / 2
+    const centerY = (anyObj.top ?? 0) + (sin * width) / 2 + (cos * height) / 2
+    const dx = x - centerX
+    const dy = y - centerY
+    const localX = (dx * cos + dy * sin) / scaleX + getTableWidth(config) / 2
+    const localY = (-dx * sin + dy * cos) / scaleY + getTableHeight(config) / 2
+    return cellAtPoint(config, localX, localY)
   }
 
   function bakeTransform(obj: FabricObject) {
@@ -537,6 +665,43 @@ export function createDesigner() {
       })
     }
     obj.setCoords()
+  }
+
+  /**
+   * Convert a Fabric scale transform on a table group into table model sizes.
+   * Fabric keeps the transform origin (the corner / edge opposite the dragged
+   * control) fixed in scene space; recording that same point before the rebuild
+   * keeps rotated tables anchored correctly.
+   */
+  function resizeTableObject(obj: FabricObject, event?: any) {
+    const config = tableConfigOf(obj)
+    if (!config) return
+    const anyObj = obj as any
+    const sx = Math.abs(anyObj.scaleX ?? 1)
+    const sy = Math.abs(anyObj.scaleY ?? 1)
+    if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6) return
+
+    const originX = event?.transform?.originX ?? 'left'
+    const originY = event?.transform?.originY ?? 'top'
+    const anchor = obj.getPointByOrigin(originX, originY)
+    const width = Math.max(2, round(getTableWidth(config) * sx, 2))
+    const height = Math.max(1, round(getTableHeight(config) * sy, 2))
+    const next = setTableHeight(setTableWidth(config, width), height)
+    const placement = {
+      anchor,
+      originX,
+      originY,
+      angle: round(anyObj.angle ?? 0, 2),
+    }
+    // This runs inside Fabric's object:modified listener, while the canvas
+    // still holds the finished transform. Rebuilding the group discards the
+    // active object, which finalizes that same transform and fires
+    // object:modified again — recursively. Defer the rebuild until Fabric has
+    // cleared the transform.
+    setTimeout(() => {
+      if (!canvas || canvas.getActiveObject() !== obj) return
+      commitTableConfig(next, placement)
+    }, 0)
   }
 
   function syncViewport() {
@@ -738,8 +903,11 @@ export function createDesigner() {
       tableElementId = ''
       tableFrame.left = 0
       tableFrame.top = 0
+      tableFrame.centerX = 0
+      tableFrame.centerY = 0
       tableFrame.width = 0
       tableFrame.height = 0
+      tableFrame.angle = 0
       return
     }
     table.value = cloneTableConfig(config)
@@ -767,8 +935,11 @@ export function createDesigner() {
       tableElementId = ''
       tableFrame.left = 0
       tableFrame.top = 0
+      tableFrame.centerX = 0
+      tableFrame.centerY = 0
       tableFrame.width = 0
       tableFrame.height = 0
+      tableFrame.angle = 0
       return
     }
 
@@ -836,15 +1007,22 @@ export function createDesigner() {
     if (single && kind === 'table' && table.value) {
       const scaleX = Math.abs(first.scaleX ?? 1) || 1
       const scaleY = Math.abs(first.scaleY ?? 1) || 1
+      const center = objs[0].getCenterPoint()
       tableFrame.left = first.left ?? 0
       tableFrame.top = first.top ?? 0
+      tableFrame.centerX = center.x
+      tableFrame.centerY = center.y
       tableFrame.width = getTableWidth(table.value) * scaleX
       tableFrame.height = getTableHeight(table.value) * scaleY
+      tableFrame.angle = first.angle ?? 0
     } else {
       tableFrame.left = 0
       tableFrame.top = 0
+      tableFrame.centerX = 0
+      tableFrame.centerY = 0
       tableFrame.width = 0
       tableFrame.height = 0
+      tableFrame.angle = 0
     }
   }
 
@@ -1012,6 +1190,7 @@ export function createDesigner() {
     if (kind === 'line') anyObj.customKind = 'line'
     anyObj.name = name || nextName(kind)
     obj.set(CONTROL_STYLE as any)
+    if (kind === 'line') configureLineHandles(obj, false)
     return obj
   }
 
@@ -1407,8 +1586,10 @@ export function createDesigner() {
         if (!tableObj) {
           if (patch.width !== undefined) applyWidth(obj, patch.width)
           if (patch.height !== undefined) applyHeight(obj, patch.height)
-          if (patch.angle !== undefined) obj.set('angle', patch.angle)
         }
+        // `rotate` (unlike set('angle')) keeps the element's centre fixed, so
+        // typing an angle behaves like dragging the rotation handle.
+        if (patch.angle !== undefined) obj.rotate(patch.angle)
         if (patch.name !== undefined) obj.set('name', patch.name)
       }
 
@@ -1519,7 +1700,7 @@ export function createDesigner() {
       group.set({
         left: anyObj.left ?? 0,
         top: anyObj.top ?? 0,
-        angle: 0,
+        angle: anyObj.angle ?? 0,
         scaleX: 1,
         scaleY: 1,
         opacity: anyObj.opacity ?? 1,
@@ -1567,12 +1748,12 @@ export function createDesigner() {
     if (!table.value || !tableExpandedRange.value) return false
     if (tableSelectionCount.value <= 1) return false
     const expanded = tableExpandedRange.value
-    return !table.value.merges.some(
+    return !table.value.mergeData.some(
       (merge) =>
-        merge.row === expanded.row &&
-        merge.col === expanded.col &&
-        merge.rowSpan === expanded.endRow - expanded.row + 1 &&
-        merge.colSpan === expanded.endCol - expanded.col + 1,
+        merge.startRow === expanded.row &&
+        merge.endRow === expanded.endRow &&
+        merge.startColumn === expanded.col &&
+        merge.endColumn === expanded.endCol,
     )
   })
 
@@ -1590,16 +1771,30 @@ export function createDesigner() {
   function clampTableSelection(config: TableConfig) {
     // Anchor and end may be in any order: a shift-click can select upwards or
     // leftwards, so each coordinate is clamped independently.
-    tableSelection.row = clamp(tableSelection.row, 0, config.rows - 1)
-    tableSelection.col = clamp(tableSelection.col, 0, config.cols - 1)
-    tableSelection.endRow = clamp(tableSelection.endRow, 0, config.rows - 1)
-    tableSelection.endCol = clamp(tableSelection.endCol, 0, config.cols - 1)
+    tableSelection.row = clamp(tableSelection.row, 0, config.rowCount - 1)
+    tableSelection.col = clamp(tableSelection.col, 0, config.columnCount - 1)
+    tableSelection.endRow = clamp(
+      tableSelection.endRow,
+      0,
+      config.rowCount - 1,
+    )
+    tableSelection.endCol = clamp(
+      tableSelection.endCol,
+      0,
+      config.columnCount - 1,
+    )
   }
 
   function commitTableConfig(
     next: TableConfig,
-    placement?: { left?: number; top?: number },
-    live = false,
+    placement?: {
+      left?: number
+      top?: number
+      anchor?: { x: number; y: number }
+      originX?: string
+      originY?: string
+      angle?: number
+    },
   ) {
     if (!canvas) return
     const active = canvas.getActiveObject() as FabricObject | null
@@ -1612,9 +1807,7 @@ export function createDesigner() {
     group.set({
       left: placement?.left ?? old.left ?? 0,
       top: placement?.top ?? old.top ?? 0,
-      // Tables are always kept upright so the HTML cell layer can map their
-      // geometry without a rotation transform.
-      angle: 0,
+      angle: placement?.angle ?? old.angle ?? 0,
       scaleX: 1,
       scaleY: 1,
       opacity: old.opacity ?? 1,
@@ -1626,7 +1819,16 @@ export function createDesigner() {
     ;(group as any).customKind = 'table'
     group.set(CONTROL_STYLE as any)
     applyLock(group, old.locked === true)
-    if (tableEditing.value) group.set('hasBorders', false)
+    if (tableEditing.value) setTableControlsEditing(group, true)
+    if (placement?.anchor) {
+      // Keep the same scene anchor Fabric used while scaling, so a rotated
+      // table does not jump when its new dimensions replace the scale.
+      group.setPositionByOrigin(
+        new Point(placement.anchor.x, placement.anchor.y),
+        (placement.originX ?? 'left') as any,
+        (placement.originY ?? 'top') as any,
+      )
+    }
     rebuildingTable = true
     try {
       canvas.discardActiveObject()
@@ -1644,19 +1846,38 @@ export function createDesigner() {
     table.value = cloneTableConfig(normalized)
     clampTableSelection(normalized)
     refreshSelection()
-    if (!live) refreshLayers()
+    refreshLayers()
     scheduleCommit()
   }
 
-  /** Enter direct cell editing: the HTML layer takes over pointer input. */
+  /**
+   * While cells are being edited the table should not move or show scaling
+   * controls; the same group remains the pointer target for cell hit-testing.
+   */
+  function setTableControlsEditing(obj: FabricObject, editing: boolean) {
+    if (editing) {
+      obj.set({
+        hasBorders: false,
+        hasControls: false,
+        lockMovementX: true,
+        lockMovementY: true,
+        hoverCursor: 'cell',
+      } as any)
+    } else {
+      applyLock(obj, (obj as any).locked === true)
+      obj.set({ hasBorders: true } as any)
+    }
+    obj.setCoords()
+  }
+
+  /** Enter direct cell editing: Fabric owns hit-testing and the range overlay. */
   function beginTableEdit() {
     if (!canvas || !table.value) return
     const active = canvas.getActiveObject() as FabricObject | null
     if (!active || !isTableObject(active)) return
     tableEditing.value = true
-    // The overlay draws its own selection frame, so Fabric's border would
-    // double up around the table.
-    active.set('hasBorders', false)
+    // The range is painted by Fabric, so its normal border would double up.
+    setTableControlsEditing(active, true)
     canvas.requestRenderAll()
   }
 
@@ -1666,6 +1887,7 @@ export function createDesigner() {
     const editedId = tableElementId
     tableEditing.value = false
     requestedCellEdit.value = null
+    tablePointerSelecting = false
     if (!canvas) return
     // The selection may already have moved to another object (e.g. via the
     // layers panel), so find the edited table by id rather than by selection.
@@ -1673,10 +1895,12 @@ export function createDesigner() {
       .getObjects()
       .find((obj) => String((obj as any).elementId ?? '') === editedId)
     if (target && isTableObject(target)) {
-      target.set('hasBorders', true)
+      setTableControlsEditing(target, false)
     } else {
       const active = canvas.getActiveObject() as FabricObject | null
-      if (active && isTableObject(active)) active.set('hasBorders', true)
+      if (active && isTableObject(active)) {
+        setTableControlsEditing(active, false)
+      }
     }
     canvas.requestRenderAll()
   }
@@ -1726,34 +1950,32 @@ export function createDesigner() {
     if (!table.value) return
     tableSelection.row = 0
     tableSelection.col = 0
-    tableSelection.endRow = table.value.rows - 1
-    tableSelection.endCol = table.value.cols - 1
+    tableSelection.endRow = table.value.rowCount - 1
+    tableSelection.endCol = table.value.columnCount - 1
+    canvas?.requestRenderAll()
   }
 
   function selectTableCells(row: number, col: number, extend = false) {
     if (!table.value) return
     const config = table.value
-    const merge = config.merges.find(
-      (item) =>
-        row >= item.row &&
-        row < item.row + item.rowSpan &&
-        col >= item.col &&
-        col < item.col + item.colSpan,
-    )
-    const cellRow = merge?.row ?? row
-    const cellCol = merge?.col ?? col
-    const endRow = merge ? merge.row + merge.rowSpan - 1 : row
-    const endCol = merge ? merge.col + merge.colSpan - 1 : col
+    const merge = findMergeContaining(config, row, col)
+    const range = merge ? mergeToRange(merge) : {
+      row,
+      col,
+      endRow: row,
+      endCol: col,
+    }
     if (!extend) {
-      tableSelection.row = cellRow
-      tableSelection.col = cellCol
-      tableSelection.endRow = endRow
-      tableSelection.endCol = endCol
+      tableSelection.row = range.row
+      tableSelection.col = range.col
+      tableSelection.endRow = range.endRow
+      tableSelection.endCol = range.endCol
     } else {
-      tableSelection.endRow = endRow
-      tableSelection.endCol = endCol
+      tableSelection.endRow = range.endRow
+      tableSelection.endCol = range.endCol
     }
     clampTableSelection(config)
+    canvas?.requestRenderAll()
   }
 
   function mergeTableCells() {
@@ -1823,19 +2045,6 @@ export function createDesigner() {
         !tableBorderState.value[side],
       ),
     )
-  }
-
-  /** Live resize used while dragging the table's selection handles. */
-  function resizeTableFrom(
-    base: TableConfig,
-    width: number,
-    height: number,
-    left?: number,
-    top?: number,
-  ) {
-    if (!table.value) return
-    const sized = setTableHeight(setTableWidth(base, width), height)
-    commitTableConfig(sized, { left, top }, true)
   }
 
   // ------------------------------------------------------------------- data
@@ -2103,7 +2312,7 @@ export function createDesigner() {
       height: tableConfig
         ? getTableHeight(tableConfig)
         : round((o.height ?? 0) * sy, 2),
-      angle: kind === 'table' ? 0 : round(o.angle ?? 0, 1),
+      angle: round(o.angle ?? 0, 1),
       opacity: round(o.opacity ?? 1, 2),
       visible: o.visible !== false,
       fill: typeof o.fill === 'string' ? o.fill : '',
@@ -2296,9 +2505,9 @@ export function createDesigner() {
     if (el.kind === 'table') {
       const config = normalizeTableConfig(el.table ?? createTableConfig())
       const group = buildTableObject(config)
-      // Tables are always upright: the on-canvas cell layer positions itself
-      // from the group's axis-aligned frame.
-      group.set({ ...common, angle: 0, scaleX: 1, scaleY: 1 } as any)
+      // Rotation is stored on the Fabric group; cell hit-testing and the range
+      // overlay both transform through that angle.
+      group.set({ ...common, scaleX: 1, scaleY: 1 } as any)
       ;(group as any).tableData = JSON.stringify(config)
       return Promise.resolve(finish(group))
     }
@@ -2632,7 +2841,6 @@ export function createDesigner() {
     setTableWidthValue,
     setTableHeightValue,
     toggleTableBorder,
-    resizeTableFrom,
     // data bindings
     addDataField,
     updateDataField,

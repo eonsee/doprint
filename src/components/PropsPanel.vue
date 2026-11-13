@@ -471,7 +471,7 @@ function align(action: AlignAction) {
           />
           <template v-if="!selection.isTable">
             <NumField
-              label="宽度"
+              :label="selection.isLine ? '长度' : '宽度'"
               :model-value="selection.layout.width"
               unit="mm"
               :step="0.5"
@@ -506,15 +506,15 @@ function align(action: AlignAction) {
               :disabled="selection.layout.locked"
               @update:model-value="update({ height: $event })"
             />
-            <NumField
-              label="旋转"
-              :model-value="selection.layout.angle"
-              unit="°"
-              :step="1"
-              :disabled="selection.layout.locked"
-              @update:model-value="update({ angle: $event })"
-            />
           </template>
+          <NumField
+            label="旋转"
+            :model-value="selection.layout.angle"
+            unit="°"
+            :step="1"
+            :disabled="selection.layout.locked"
+            @update:model-value="update({ angle: $event })"
+          />
         </div>
         <SliderField
           class="opacity-field"
@@ -530,10 +530,13 @@ function align(action: AlignAction) {
           元素已锁定，位置与尺寸不可修改
         </p>
         <p v-else-if="selection.isTable" class="field-note">
-          表格尺寸、行数与列数请在下方「表格」面板调整
+          表格尺寸、行数与列数请在下方「表格」面板调整；旋转可在此设置或直接拖动旋转控制点
         </p>
         <p v-else-if="selection.isText" class="field-note">
           文本高度由字号和换行自动决定
+        </p>
+        <p v-else-if="selection.isLine" class="field-note">
+          拖动画布上的左右控制点只改变线条长度，粗细请在这里设置
         </p>
       </InspectorSection>
 

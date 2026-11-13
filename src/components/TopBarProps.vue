@@ -149,6 +149,12 @@ function onSize(axis: 'width' | 'height', event: Event) {
   update(axis === 'width' ? { width: value } : { height: value })
 }
 
+function onAngle(event: Event) {
+  const value = readNumber(event)
+  if (value === null) return
+  update({ angle: value })
+}
+
 function toggleBold() {
   update({
     fontWeight: selection.text.fontWeight === 'bold' ? 'normal' : 'bold',
@@ -330,8 +336,12 @@ function alignObjects(action: AlignAction) {
           />
           <em>mm</em>
         </label>
-        <label v-if="showWidth" class="tbp-num" title="宽度">
-          <span>W</span>
+        <label
+          v-if="showWidth"
+          class="tbp-num"
+          :title="selection.isLine ? '线条长度' : '宽度'"
+        >
+          <span>{{ selection.isLine ? '长' : 'W' }}</span>
           <input
             type="number"
             step="0.5"
@@ -357,6 +367,17 @@ function alignObjects(action: AlignAction) {
             @change="onSize('height', $event)"
           />
           <em>mm</em>
+        </label>
+        <label class="tbp-num" title="旋转角度">
+          <span>∠</span>
+          <input
+            type="number"
+            step="1"
+            :disabled="selection.layout.locked"
+            :value="selection.layout.angle"
+            @change="onAngle"
+          />
+          <em>°</em>
         </label>
       </template>
 

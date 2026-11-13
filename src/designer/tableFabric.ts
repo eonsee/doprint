@@ -4,6 +4,10 @@ import type { TableConfig } from './types'
 import {
   buildRegions,
   cellBorderVisible,
+  getCellStyle,
+  getCellValue,
+  getColumnWidths,
+  getRowHeights,
   getTableHeight,
   getTableWidth,
   type TableBorderSide,
@@ -32,13 +36,16 @@ function solidRect(
 }
 
 /**
- * Build the fabric representation of a table: a group of background, cell
- * fills, border segments and textboxes. Merged cell borders are skipped, so
- * merged regions read as one continuous cell.
+ * Render a table snapshot with Fabric. The model is the source of truth: this
+ * function only walks its sparse cell data / style registry and emits a group
+ * of background, fills, border segments and text boxes. Selection and scaling
+ * are handled by Fabric on the group, not by any HTML overlay.
  */
 export function buildTableObject(config: TableConfig): Group {
   const width = getTableWidth(config)
   const height = getTableHeight(config)
+  const colWidths = getColumnWidths(config)
+  const rowHeights = getRowHeights(config)
   const bw = clamp(config.borderWidth, 0, Math.max(0, Math.min(width, height) / 4))
   const children: FabricObject[] = []
 
@@ -51,10 +58,10 @@ export function buildTableObject(config: TableConfig): Group {
 
   // Cell fills first, so borders and text sit above them.
   for (const region of regions) {
-    const cell = config.cells[region.row]?.[region.col]
-    if (cell?.fill) {
+    const style = getCellStyle(config, region.row, region.col)
+    if (style.fill) {
       children.push(
-        solidRect(region.x, region.y, region.width, region.height, cell.fill),
+        solidRect(region.x, region.y, region.width, region.height, style.fill),
       )
     }
   }
@@ -73,12 +80,12 @@ export function buildTableObject(config: TableConfig): Group {
         }
       }
     }
-    const cellOf = (region: (typeof regions)[number]) =>
-      config.cells[region.row]?.[region.col]
+    const styleOf = (region: (typeof regions)[number]) =>
+      getCellStyle(config, region.row, region.col)
     const sideOn = (
       region: (typeof regions)[number] | undefined,
       side: TableBorderSide,
-    ) => !region || cellBorderVisible(cellOf(region), side)
+    ) => !region || cellBorderVisible(styleOf(region), side)
 
     // Outer edges are drawn per region so each side can be hidden on its own.
     for (const region of regions) {
@@ -86,7 +93,7 @@ export function buildTableObject(config: TableConfig): Group {
         children.push(solidRect(region.x, 0, region.width, bw, color))
       }
       if (
-        region.row + region.rowSpan === config.rows &&
+        region.row + region.rowSpan === config.rowCount &&
         sideOn(region, 'bottom')
       ) {
         children.push(
@@ -97,7 +104,7 @@ export function buildTableObject(config: TableConfig): Group {
         children.push(solidRect(0, region.y, bw, region.height, color))
       }
       if (
-        region.col + region.colSpan === config.cols &&
+        region.col + region.colSpan === config.columnCount &&
         sideOn(region, 'right')
       ) {
         children.push(
@@ -107,17 +114,17 @@ export function buildTableObject(config: TableConfig): Group {
     }
 
     const xs = [0]
-    for (const colWidth of config.colWidths) {
+    for (const colWidth of colWidths) {
       xs.push(xs[xs.length - 1] + colWidth)
     }
     const ys = [0]
-    for (const rowHeight of config.rowHeights) {
+    for (const rowHeight of rowHeights) {
       ys.push(ys[ys.length - 1] + rowHeight)
     }
 
     // Internal edges show only when both neighbouring cells show their side.
-    for (let row = 1; row < config.rows; row += 1) {
-      for (let col = 0; col < config.cols; col += 1) {
+    for (let row = 1; row < config.rowCount; row += 1) {
+      for (let col = 0; col < config.columnCount; col += 1) {
         const above = regionAt.get(`${row - 1},${col}`)
         const below = regionAt.get(`${row},${col}`)
         if (!above || !below || above === below) continue
@@ -126,7 +133,7 @@ export function buildTableObject(config: TableConfig): Group {
           solidRect(
             xs[col],
             ys[row] - bw / 2,
-            config.colWidths[col],
+            colWidths[col],
             bw,
             color,
           ),
@@ -134,8 +141,8 @@ export function buildTableObject(config: TableConfig): Group {
       }
     }
 
-    for (let col = 1; col < config.cols; col += 1) {
-      for (let row = 0; row < config.rows; row += 1) {
+    for (let col = 1; col < config.columnCount; col += 1) {
+      for (let row = 0; row < config.rowCount; row += 1) {
         const left = regionAt.get(`${row},${col - 1}`)
         const right = regionAt.get(`${row},${col}`)
         if (!left || !right || left === right) continue
@@ -145,7 +152,7 @@ export function buildTableObject(config: TableConfig): Group {
             xs[col] - bw / 2,
             ys[row],
             bw,
-            config.rowHeights[row],
+            rowHeights[row],
             color,
           ),
         )
@@ -155,8 +162,9 @@ export function buildTableObject(config: TableConfig): Group {
 
   // Cell text, positioned according to vertical alignment.
   for (const region of regions) {
-    const cell = config.cells[region.row]?.[region.col]
-    if (!cell || !cell.text) continue
+    const value = getCellValue(config, region.row, region.col)
+    if (!value) continue
+    const style = getCellStyle(config, region.row, region.col)
     const padding = Math.min(
       config.padding,
       Math.max(0, region.width / 3),
@@ -168,15 +176,15 @@ export function buildTableObject(config: TableConfig): Group {
       0.5,
       Math.min(config.fontSize, availableHeight * 1.25),
     )
-    const text = new Textbox(cell.text, {
+    const text = new Textbox(value, {
       left: region.x + padding,
       top: region.y + padding,
       width: availableWidth,
       fontSize,
       fontFamily: config.fontFamily,
-      fontWeight: cell.bold ? 'bold' : 'normal',
-      fill: cell.color || config.color || '#111827',
-      textAlign: cell.align || 'left',
+      fontWeight: style.bold ? 'bold' : 'normal',
+      fill: style.color || config.color || '#111827',
+      textAlign: style.align || 'left',
       lineHeight: 1.15,
       splitByGrapheme: true,
       strokeWidth: 0,
@@ -190,9 +198,9 @@ export function buildTableObject(config: TableConfig): Group {
       availableHeight,
     )
     let top = region.y + padding
-    if (cell.valign === 'middle') {
+    if (style.valign === 'middle') {
       top = region.y + (region.height - textHeight) / 2
-    } else if (cell.valign === 'bottom') {
+    } else if (style.valign === 'bottom') {
       top = region.y + region.height - padding - textHeight
     }
     text.set({ top, left: region.x + padding })

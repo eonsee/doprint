@@ -87,10 +87,12 @@ export function resolveTemplateBindings(
       element.text = resolveBindings(element.text, fields)
     }
     if (element.table) {
-      for (const row of element.table.cells ?? []) {
-        for (const cell of row ?? []) {
-          if (typeof cell.text === 'string') {
-            cell.text = resolveBindings(cell.text, fields)
+      // Cells are sparse (row -> column -> { v, s }), so only non-empty
+      // values are visited.
+      for (const row of Object.values(element.table.cellData ?? {})) {
+        for (const cell of Object.values(row ?? {})) {
+          if (typeof cell.v === 'string') {
+            cell.v = resolveBindings(cell.v, fields)
           }
         }
       }

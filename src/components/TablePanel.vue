@@ -25,6 +25,7 @@ import {
   TABLE_LIMITS,
   buildRegions,
   cellAt,
+  getColumnWidths,
   normalizeRange,
 } from '../designer/table'
 import {
@@ -93,7 +94,7 @@ const fontSizePx = computed(() =>
 const gridStyle = computed(() => {
   if (!table.value) return {}
   return {
-    gridTemplateColumns: table.value.colWidths
+    gridTemplateColumns: getColumnWidths(table.value)
       .map((width) => `minmax(0, ${width}fr)`)
       .join(' '),
   }
@@ -146,12 +147,12 @@ function onCellClick(region: TableRegion, event: MouseEvent) {
 
 function onRows(value: number) {
   if (!table.value) return
-  designer.setTableSize(Math.round(value), table.value.cols)
+  designer.setTableSize(Math.round(value), table.value.columnCount)
 }
 
 function onCols(value: number) {
   if (!table.value) return
-  designer.setTableSize(table.value.rows, Math.round(value))
+  designer.setTableSize(table.value.rowCount, Math.round(value))
 }
 
 function setAlign(align: TableAlign) {
@@ -211,7 +212,7 @@ function toggleCanvasEditing() {
       <div class="field-grid">
         <NumField
           label="行数"
-          :model-value="table.rows"
+          :model-value="table.rowCount"
           :step="1"
           :min="TABLE_LIMITS.minRows"
           :max="TABLE_LIMITS.maxRows"
@@ -219,7 +220,7 @@ function toggleCanvasEditing() {
         />
         <NumField
           label="列数"
-          :model-value="table.cols"
+          :model-value="table.columnCount"
           :step="1"
           :min="TABLE_LIMITS.minCols"
           :max="TABLE_LIMITS.maxCols"
@@ -297,9 +298,9 @@ function toggleCanvasEditing() {
         </button>
       </div>
       <p class="field-note">
-        双击画布上的表格可直接框选、合并、拆分和输入内容；按住 Shift
-        点击可扩展选区。拖动选区边框上的 8 个控制点可缩放整张表格（角点按
-        Shift 等比缩放），工具栏按钮可显示或隐藏选区四边边框。
+        选中表格后可拖动 8 个控制点缩放整张表格（角点按 Shift
+        等比缩放），上方旋转控制点可调整角度。双击表格进入单元格编辑：拖拽框选、Shift
+        扩展选区，双击或直接输入即可编辑内容，工具栏可合并、拆分及显示或隐藏选区四边边框。
       </p>
     </InspectorSection>
 

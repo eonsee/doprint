@@ -25,18 +25,14 @@ import {
 } from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
 import {
-  buildRegions,
   cellAt,
-  cellAtPoint,
-  cloneTableConfig,
   regionAtCell,
   type TableAlign,
   type TableCell,
   type TableRegion,
   type TableVAlign,
 } from '../designer/table'
-import type { TableConfig } from '../designer/types'
-import { clamp, round } from '../designer/units'
+import { clamp } from '../designer/units'
 
 const designer = useDesigner()
 const {
@@ -65,27 +61,40 @@ interface CellEditorState {
 const editing = ref<CellEditorState | null>(null)
 const draft = ref('')
 
-const regions = computed<TableRegion[]>(() =>
-  table.value ? buildRegions(table.value) : [],
-)
-
-const overlayStyle = computed(() => ({
-  left: `${tableFrame.left * view.zoom}px`,
-  top: `${tableFrame.top * view.zoom}px`,
-  width: `${tableFrame.width * view.zoom}px`,
-  height: `${tableFrame.height * view.zoom}px`,
-}))
+const tableLayerStyle = computed(() => {
+  const width = tableFrame.width * view.zoom
+  const height = tableFrame.height * view.zoom
+  return {
+    left: `${tableFrame.centerX * view.zoom - width / 2}px`,
+    top: `${tableFrame.centerY * view.zoom - height / 2}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+    transform: `rotate(${tableFrame.angle}deg)`,
+  }
+})
 
 const toolbarStyle = computed(() => {
-  const pageWidth = page.width * view.zoom
-  const tableLeft = tableFrame.left * view.zoom
-  const tableTop = tableFrame.top * view.zoom
-  const below = tableTop < 58
+  const radians = (tableFrame.angle * Math.PI) / 180
+  const cos = Math.abs(Math.cos(radians))
+  const sin = Math.abs(Math.sin(radians))
+  const width = tableFrame.width * view.zoom
+  const height = tableFrame.height * view.zoom
+  // Axis-aligned bounds of the rotated table, in CSS pixels.
+  const boxWidth = cos * width + sin * height
+  const boxHeight = sin * width + cos * height
+  const left = tableFrame.centerX * view.zoom - boxWidth / 2
+  const right = tableFrame.centerX * view.zoom + boxWidth / 2
+  const top = tableFrame.centerY * view.zoom - boxHeight / 2
+  const bottom = tableFrame.centerY * view.zoom + boxHeight / 2
+  const below = top < 58
   return {
-    top: below
-      ? `${tableFrame.height * view.zoom + 10}px`
-      : '-46px',
-    ...(tableLeft > pageWidth / 2 ? { right: '0px' } : { left: '0px' }),
+    top: `${below ? bottom + 10 : top - 46}px`,
+    // The toolbar is wider than a table, so anchor it to the table edge that
+    // faces the middle of the page: that keeps it inside the canvas stage for
+    // tables in either half instead of running under the inspector.
+    ...(tableFrame.centerX > page.width / 2
+      ? { right: `${Math.max(0, page.width * view.zoom - right)}px` }
+      : { left: `${Math.max(0, left)}px` }),
   }
 })
 
@@ -147,42 +156,12 @@ const editorStyle = computed(() => {
   }
 })
 
-function regionStyle(region: TableRegion) {
-  return {
-    left: `${region.x * view.zoom}px`,
-    top: `${region.y * view.zoom}px`,
-    width: `${region.width * view.zoom}px`,
-    height: `${region.height * view.zoom}px`,
-  }
-}
-
-function isSelected(region: TableRegion): boolean {
-  return !(
-    region.row + region.rowSpan - 1 <
-      Math.min(tableSelection.row, tableSelection.endRow) ||
-    region.row > Math.max(tableSelection.row, tableSelection.endRow) ||
-    region.col + region.colSpan - 1 <
-      Math.min(tableSelection.col, tableSelection.endCol) ||
-    region.col > Math.max(tableSelection.col, tableSelection.endCol)
-  )
-}
-
-function isAnchor(region: TableRegion): boolean {
-  return (
-    region.row === Math.min(tableSelection.row, tableSelection.endRow) &&
-    region.col === Math.min(tableSelection.col, tableSelection.endCol)
-  )
-}
-
-function focusOverlay() {
-  nextTick(() => {
-    if (tableEditing.value && !editing.value) {
-      overlayEl.value?.focus({ preventScroll: true })
-    }
-  })
-}
-
-function openEditor(row: number, col: number, selectAll: boolean, seed?: string) {
+function openEditor(
+  row: number,
+  col: number,
+  selectAll: boolean,
+  seed?: string,
+) {
   const config = table.value
   if (!config) return
   const region = regionAtCell(config, row, col)
@@ -214,206 +193,23 @@ function commitEditor(move: 'next' | 'prev' | null = null) {
     const dCol = move === 'next' ? 1 : -1
     stepSelection(0, dCol)
   }
-  focusOverlay()
 }
 
 function cancelEditor() {
   editing.value = null
-  focusOverlay()
-}
-
-function onCellPointerDown(_region: TableRegion, event: PointerEvent) {
-  if (event.button !== 0) return
-  event.preventDefault()
-  // Clicking another cell finishes the open editor first. preventDefault stops
-  // the browser's native focus change, so this must be explicit.
-  if (editing.value) commitEditor()
-  overlayEl.value?.focus({ preventScroll: true })
-  const cell = cellPointFromEvent(event)
-  if (!cell) return
-  if (event.shiftKey) {
-    designer.selectTableCells(cell.row, cell.col, true)
-  } else {
-    designer.selectTableCells(cell.row, cell.col)
-  }
-  beginDrag()
-}
-
-let dragging = false
-
-function beginDrag() {
-  if (dragging) return
-  dragging = true
-  window.addEventListener('pointermove', onWindowPointerMove)
-  window.addEventListener('pointerup', endDrag)
-  window.addEventListener('pointercancel', endDrag)
-}
-
-function endDrag() {
-  dragging = false
-  window.removeEventListener('pointermove', onWindowPointerMove)
-  window.removeEventListener('pointerup', endDrag)
-  window.removeEventListener('pointercancel', endDrag)
-}
-
-function onWindowPointerMove(event: PointerEvent) {
-  if (!dragging) return
-  const cell = cellPointFromEvent(event)
-  if (!cell) return
-  designer.selectTableCells(cell.row, cell.col, true)
-}
-
-function cellPointFromEvent(event: PointerEvent) {
-  const el = overlayEl.value
-  if (!el || !table.value) return null
-  const rect = el.getBoundingClientRect()
-  const x = (event.clientX - rect.left) / view.zoom
-  const y = (event.clientY - rect.top) / view.zoom
-  return cellAtPoint(table.value, x, y)
-}
-
-// ------------------------------------------------- table resize handles
-
-type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-
-const RESIZE_HANDLES: ResizeDir[] = [
-  'nw',
-  'n',
-  'ne',
-  'e',
-  'se',
-  's',
-  'sw',
-  'w',
-]
-
-interface ResizeState {
-  dir: ResizeDir
-  startX: number
-  startY: number
-  startW: number
-  startH: number
-  startLeft: number
-  startTop: number
-  /** Config snapshot so repeated frames scale from the same baseline. */
-  base: TableConfig
-}
-
-let resizeState: ResizeState | null = null
-let resizePointer: { x: number; y: number; shift: boolean } | null = null
-let resizeRaf = 0
-
-function startResize(dir: ResizeDir, event: PointerEvent) {
-  if (event.button !== 0 || !table.value) return
-  event.preventDefault()
-  event.stopPropagation()
-  if (editing.value) commitEditor()
-  const config = table.value
-  if (!config) return
-  resizeState = {
-    dir,
-    startX: event.clientX,
-    startY: event.clientY,
-    startW: tableFrame.width,
-    startH: tableFrame.height,
-    startLeft: tableFrame.left,
-    startTop: tableFrame.top,
-    base: cloneTableConfig(config),
-  }
-  resizePointer = { x: event.clientX, y: event.clientY, shift: event.shiftKey }
-  window.addEventListener('pointermove', onResizeMove)
-  window.addEventListener('pointerup', endResize)
-  window.addEventListener('pointercancel', endResize)
-}
-
-function onResizeMove(event: PointerEvent) {
-  if (!resizeState) return
-  resizePointer = { x: event.clientX, y: event.clientY, shift: event.shiftKey }
-  if (!resizeRaf) resizeRaf = requestAnimationFrame(applyResize)
-}
-
-function applyResize() {
-  resizeRaf = 0
-  const state = resizeState
-  const pointer = resizePointer
-  const config = table.value
-  if (!state || !pointer || !config) return
-
-  const dx = (pointer.x - state.startX) / view.zoom
-  const dy = (pointer.y - state.startY) / view.zoom
-  const hasE = state.dir.includes('e')
-  const hasW = state.dir.includes('w')
-  const hasS = state.dir.includes('s')
-  const hasN = state.dir.includes('n')
-
-  // Keep every row / column at or above the 0.5 mm floor used by the config.
-  const minWidth = Math.max(2, 0.5 * config.cols)
-  const minHeight = Math.max(1, 0.5 * config.rows)
-
-  let width = hasW ? state.startW - dx : hasE ? state.startW + dx : state.startW
-  let height = hasN ? state.startH - dy : hasS ? state.startH + dy : state.startH
-
-  const isCorner = (hasE || hasW) && (hasN || hasS)
-  if (isCorner && pointer.shift) {
-    // Proportional corner scaling: follow the axis that moved the most.
-    const sx = width / state.startW
-    const sy = height / state.startH
-    let scale = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy
-    scale = Math.max(scale, minWidth / state.startW, minHeight / state.startH)
-    width = state.startW * scale
-    height = state.startH * scale
-  }
-
-  width = Math.max(minWidth, width)
-  height = Math.max(minHeight, height)
-  // Dragging a left / top handle keeps the opposite edge anchored.
-  const left = hasW
-    ? round(state.startLeft + state.startW - width, 2)
-    : undefined
-  const top = hasN
-    ? round(state.startTop + state.startH - height, 2)
-    : undefined
-
-  if (
-    Math.abs(width - tableFrame.width) < 0.01 &&
-    Math.abs(height - tableFrame.height) < 0.01 &&
-    (left === undefined || Math.abs(left - tableFrame.left) < 0.01) &&
-    (top === undefined || Math.abs(top - tableFrame.top) < 0.01)
-  ) {
-    return
-  }
-
-  designer.resizeTableFrom(
-    state.base,
-    round(width, 2),
-    round(height, 2),
-    left,
-    top,
-  )
-}
-
-function endResize() {
-  if (resizeRaf) {
-    cancelAnimationFrame(resizeRaf)
-    resizeRaf = 0
-  }
-  if (resizeState) applyResize()
-  resizeState = null
-  resizePointer = null
-  window.removeEventListener('pointermove', onResizeMove)
-  window.removeEventListener('pointerup', endResize)
-  window.removeEventListener('pointercancel', endResize)
 }
 
 function stepSelection(dRow: number, dCol: number, extend = false) {
   const config = table.value
   if (!config) return
-  const anchorRow = extend ? tableSelection.endRow : tableSelection.row
-  const anchorCol = extend ? tableSelection.endCol : tableSelection.col
-  const region = regionAtCell(config, anchorRow, anchorCol)
-  let row = anchorRow
-  let col = anchorCol
-  if (!extend && region) {
+  // `endRow / endCol` is the active edge of the range. After a Shift-selection
+  // an arrow should continue from that edge, not snap back to the anchor.
+  const baseRow = tableSelection.endRow
+  const baseCol = tableSelection.endCol
+  const region = regionAtCell(config, baseRow, baseCol)
+  let row = baseRow
+  let col = baseCol
+  if (region) {
     // Move past the whole merged region instead of landing inside it.
     if (dRow > 0) row = region.row + region.rowSpan
     else if (dRow < 0) row = region.row - 1
@@ -423,22 +219,27 @@ function stepSelection(dRow: number, dCol: number, extend = false) {
     row += dRow
     col += dCol
   }
-  row = clamp(row, 0, config.rows - 1)
-  col = clamp(col, 0, config.cols - 1)
+  row = clamp(row, 0, config.rowCount - 1)
+  col = clamp(col, 0, config.columnCount - 1)
   designer.selectTableCells(row, col, extend)
 }
 
+function isTextInput(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    target.isContentEditable
+  )
+}
+
 function onKeydown(event: KeyboardEvent) {
-  if (!table.value) return
-  const target = event.target as HTMLElement | null
-  if (
-    target &&
-    (target.tagName === 'TEXTAREA' ||
-      target.tagName === 'INPUT' ||
-      target.isContentEditable)
-  ) {
-    return
-  }
+  if (!table.value || !tableEditing.value) return
+  if (document.querySelector('[data-modal]')) return
+  // While the inline textarea is open it owns the keyboard.
+  if (editing.value || isTextInput(event.target)) return
 
   const mod = event.ctrlKey || event.metaKey
   if (mod) {
@@ -549,16 +350,11 @@ function onDocumentPointerDown(event: PointerEvent) {
 
 onMounted(() => {
   window.addEventListener('pointerdown', onDocumentPointerDown, true)
+  window.addEventListener('keydown', onKeydown)
 })
 
 watch(tableEditing, (active) => {
-  if (!active) {
-    editing.value = null
-    endDrag()
-    endResize()
-    return
-  }
-  if (!requestedCellEdit.value) focusOverlay()
+  if (!active) editing.value = null
 })
 
 watch(requestedCellEdit, (request) => {
@@ -568,9 +364,8 @@ watch(requestedCellEdit, (request) => {
 })
 
 onBeforeUnmount(() => {
-  endDrag()
-  endResize()
   window.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -579,45 +374,21 @@ onBeforeUnmount(() => {
     v-if="table && tableEditing"
     ref="overlayEl"
     class="canvas-table-editor"
-    :style="overlayStyle"
-    tabindex="0"
-    @keydown="onKeydown"
   >
-    <div
-      v-for="region in regions"
-      :key="`${region.row}-${region.col}`"
-      class="cte-cell"
-      :class="{
-        selected: isSelected(region),
-        anchor: isAnchor(region),
-      }"
-      :style="regionStyle(region)"
-      @pointerdown="onCellPointerDown(region, $event)"
-      @dblclick="openEditor(region.row, region.col, true)"
-    ></div>
-
-    <textarea
-      v-if="editing && editorRegion"
-      ref="editorEl"
-      v-model="draft"
-      class="cte-input"
-      :style="editorStyle"
-      spellcheck="false"
-      placeholder="输入内容"
-      @blur="commitEditor()"
-      @keydown.enter.exact.prevent.stop="commitEditor()"
-      @keydown.esc.prevent.stop="cancelEditor"
-      @keydown.tab.prevent.stop="commitEditor($event.shiftKey ? 'prev' : 'next')"
-    ></textarea>
-
-    <div v-if="!editing" class="cte-frame">
-      <span
-        v-for="dir in RESIZE_HANDLES"
-        :key="dir"
-        class="cte-handle"
-        :class="`dir-${dir}`"
-        @pointerdown="startResize(dir, $event)"
-      ></span>
+    <div class="cte-cell-layer" :style="tableLayerStyle">
+      <textarea
+        v-if="editing && editorRegion"
+        ref="editorEl"
+        v-model="draft"
+        class="cte-input"
+        :style="editorStyle"
+        spellcheck="false"
+        placeholder="输入内容"
+        @blur="commitEditor()"
+        @keydown.enter.exact.prevent.stop="commitEditor()"
+        @keydown.esc.prevent.stop="cancelEditor"
+        @keydown.tab.prevent.stop="commitEditor($event.shiftKey ? 'prev' : 'next')"
+      ></textarea>
     </div>
 
     <div class="cte-toolbar" :style="toolbarStyle" @mousedown="onToolbarPointerDown">

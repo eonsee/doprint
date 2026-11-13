@@ -9,15 +9,19 @@ export type ElementKind =
 export type TableAlign = 'left' | 'center' | 'right'
 export type TableVAlign = 'top' | 'middle' | 'bottom'
 
+/**
+ * Effective cell view used by the inspector and the inline editor. The stored
+ * table model keeps values and styles separately (see TableCellData).
+ */
 export interface TableCell {
   /** may contain {{dataField}} placeholders */
   text?: string
   align?: TableAlign
   valign?: TableVAlign
   bold?: boolean
-  /** cell background colour */
+  /** cell background colour; an empty string explicitly clears it */
   fill?: string
-  /** cell text colour */
+  /** cell text colour; an empty string falls back to the table colour */
   color?: string
   /** per-side border visibility; `false` hides that side (default visible) */
   borderTop?: boolean
@@ -26,24 +30,72 @@ export interface TableCell {
   borderLeft?: boolean
 }
 
-export interface TableMerge {
-  /** zero-based anchor row */
-  row: number
-  /** zero-based anchor column */
-  col: number
-  rowSpan: number
-  colSpan: number
+/**
+ * A cell style stored in the table's style registry. Cell data references a
+ * style id, so repeated formatting is only stored once (the same idea as
+ * Univer's workbook `styles` map).
+ */
+export type TableCellStyle = Omit<TableCell, 'text'>
+
+/**
+ * Sparse cell data. A missing cell means "empty text with the row style".
+ * `v` is the value and `s` references `TableConfig.styles`.
+ */
+export interface TableCellData {
+  v?: string
+  s?: string
 }
 
+/** Univer-style row metadata: height plus an optional row default style. */
+export interface TableRowData {
+  /** row height in millimetres */
+  h: number
+  /** style id applied to every cell in the row unless the cell overrides it */
+  s?: string
+}
+
+/** Univer-style column metadata. */
+export interface TableColumnData {
+  /** column width in millimetres */
+  w: number
+}
+
+/** Inclusive cell range, matching Univer's `IRange` conventions. */
+export interface TableMergeData {
+  startRow: number
+  endRow: number
+  startColumn: number
+  endColumn: number
+}
+
+/**
+ * Table snapshot, version 2.
+ *
+ * The layout intentionally follows Univer's worksheet data model rather than
+ * storing a dense 2D cell matrix: row and column metadata live in separate
+ * maps, cell data is sparse, merges are inclusive ranges, and visual styles
+ * are interned in a registry. All table commands live in `table.ts` and are
+ * pure; Fabric only renders the snapshot and handles canvas interaction.
+ *
+ * Version 1 (the dense `rows` / `cells` / `merges` shape) is migrated on read
+ * by `normalizeTableConfig`.
+ */
 export interface TableConfig {
-  rows: number
-  cols: number
-  /** row heights in mm */
-  rowHeights: number[]
-  /** column widths in mm */
-  colWidths: number[]
-  cells: TableCell[][]
-  merges: TableMerge[]
+  version: 2
+  rowCount: number
+  columnCount: number
+  /** row heights and row default styles, keyed by row index */
+  rowData: Record<number, TableRowData>
+  /** column widths, keyed by column index */
+  columnData: Record<number, TableColumnData>
+  /** sparse cell values / style references, keyed by row then column */
+  cellData: Record<number, Record<number, TableCellData>>
+  /** merged ranges, inclusive on both ends */
+  mergeData: TableMergeData[]
+  /** shared cell style registry */
+  styles: Record<string, TableCellStyle>
+  /** base style id inherited by every cell */
+  defaultStyle: string
   /** mm */
   fontSize: number
   fontFamily: string
