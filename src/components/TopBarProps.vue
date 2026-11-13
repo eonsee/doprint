@@ -21,6 +21,7 @@ import {
   Unlock,
 } from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
+import { getCellStyle } from '../designer/table'
 import type { AlignAction, UpdatePatch } from '../designer/types'
 import {
   DEFAULT_FONT_PX,
@@ -33,30 +34,59 @@ import {
 } from '../designer/units'
 
 const designer = useDesigner()
-const { selection, table, globalTextStyle } = designer
+const { selection, table, tableSelection, globalTextStyle } = designer
 
 const isMulti = computed(() => selection.count > 1)
 const isTextSelected = computed(() => !isMulti.value && selection.isText)
 const isTableSelected = computed(() => !isMulti.value && selection.isTable)
+/** A multi-selection that contains text elements or tables. */
+const multiFontTargets = computed(
+  () =>
+    isMulti.value &&
+    (selection.textCount > 0 || selection.tableCount > 0),
+)
+const multiTextSelected = computed(
+  () => isMulti.value && selection.textCount > 0,
+)
 const showFontControls = computed(
-  () => isTextSelected.value || isTableSelected.value,
+  () =>
+    isTextSelected.value ||
+    isTableSelected.value ||
+    multiFontTargets.value,
 )
 const showWidth = computed(() => !isMulti.value && !selection.isTable)
 const showHeight = computed(
   () => !isMulti.value && !selection.isTable && !selection.isText,
 )
-const showTextControls = computed(() => isTextSelected.value)
+const showTextControls = computed(
+  () => isTextSelected.value || multiTextSelected.value,
+)
+// For a table, the top bar edits the selected cell range (Excel-style); the
+// whole-table defaults live in the inspector's "表格样式" section.
+const editingCells = computed(() => isTableSelected.value && !!table.value)
 
-const fontFamily = computed(() =>
-  isTableSelected.value && table.value
-    ? table.value.fontFamily
-    : selection.text.fontFamily,
+/** Effective style of the active cell while editing a table range. */
+const cellStyle = computed(() =>
+  editingCells.value && table.value
+    ? getCellStyle(table.value, tableSelection.row, tableSelection.col)
+    : undefined,
 )
-const fontSizePx = computed(() =>
-  isTableSelected.value && table.value
-    ? round(table.value.fontSize * PX_PER_MM, 1)
-    : round(selection.text.fontSize * PX_PER_MM, 1),
-)
+
+const fontFamily = computed(() => {
+  if (isTableSelected.value && table.value) {
+    return cellStyle.value?.fontFamily ?? table.value.fontFamily
+  }
+  return selection.text.fontFamily
+})
+const fontSizePx = computed(() => {
+  if (isTableSelected.value && table.value) {
+    return round(
+      (cellStyle.value?.fontSize ?? table.value.fontSize) * PX_PER_MM,
+      1,
+    )
+  }
+  return round(selection.text.fontSize * PX_PER_MM, 1)
+})
 const selectionSizeOptions = computed(() => fontSizeOptions(fontSizePx.value))
 
 /* ------------------------------------------------------------ global mode */
@@ -115,7 +145,9 @@ function update(patch: UpdatePatch) {
 
 function onFontFamily(event: Event) {
   const value = (event.target as HTMLSelectElement).value
-  if (isTableSelected.value) designer.updateTableStyle({ fontFamily: value })
+  if (isMulti.value) designer.updateSelectedTextStyle({ fontFamily: value })
+  else if (editingCells.value) designer.updateSelectedCells({ fontFamily: value })
+  else if (isTableSelected.value) designer.updateTableStyle({ fontFamily: value })
   else update({ fontFamily: value })
 }
 
@@ -127,7 +159,9 @@ function onFontSize(event: Event) {
     return
   }
   const mm = clamp(value, 4, 300) * PX_TO_MM
-  if (isTableSelected.value) designer.updateTableStyle({ fontSize: mm })
+  if (isMulti.value) designer.updateSelectedTextStyle({ fontSize: mm })
+  else if (editingCells.value) designer.updateSelectedCells({ fontSize: mm })
+  else if (isTableSelected.value) designer.updateTableStyle({ fontSize: mm })
   else update({ fontSize: mm })
 }
 
@@ -156,19 +190,23 @@ function onAngle(event: Event) {
 }
 
 function toggleBold() {
-  update({
-    fontWeight: selection.text.fontWeight === 'bold' ? 'normal' : 'bold',
-  })
+  const fontWeight =
+    selection.text.fontWeight === 'bold' ? 'normal' : 'bold'
+  if (isMulti.value) designer.updateSelectedTextStyle({ fontWeight })
+  else update({ fontWeight })
 }
 
 function toggleItalic() {
-  update({
-    fontStyle: selection.text.fontStyle === 'italic' ? 'normal' : 'italic',
-  })
+  const fontStyle =
+    selection.text.fontStyle === 'italic' ? 'normal' : 'italic'
+  if (isMulti.value) designer.updateSelectedTextStyle({ fontStyle })
+  else update({ fontStyle })
 }
 
 function toggleUnderline() {
-  update({ underline: !selection.text.underline })
+  const underline = !selection.text.underline
+  if (isMulti.value) designer.updateSelectedTextStyle({ underline })
+  else update({ underline })
 }
 
 function setTextAlign(align: string) {

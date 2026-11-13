@@ -42,6 +42,8 @@ import {
   createTableConfig,
   expandRangeToMerges,
   findMergeContaining,
+  getColumnWidths,
+  getRowHeights,
   getTableHeight,
   getTableSize,
   getTableWidth,
@@ -53,6 +55,8 @@ import {
   rangeCellCount,
   rangeLabel,
   regionAtCell,
+  resizeColumn,
+  resizeRow,
   resizeTable,
   setRangeBorder,
   setTableHeight,
@@ -439,6 +443,17 @@ export function createDesigner() {
   let rebuildingTable = false
   /** True while dragging a cell range on the Fabric canvas. */
   let tablePointerSelecting = false
+  /**
+   * Active column / row border drag while editing cells. `start` is the
+   * pointer position in table-local millimetres and `size` the original
+   * column width or row height.
+   */
+  let tableDividerDrag: {
+    kind: 'column' | 'row'
+    index: number
+    start: number
+    size: number
+  } | null = null
 
   let canvas: Canvas | null = null
   let viewportWidth = 0
@@ -460,7 +475,19 @@ export function createDesigner() {
     return preset?.key ?? 'custom'
   })
 
-  const zoomPercent = computed(() => Math.round((view.zoom / PX_PER_MM) * 100))
+  /**
+   * Screen pixels per physical millimetre at 100% zoom. The browser already
+   * maps CSS pixels through the OS / browser scaling, so the device pixel
+   * ratio is what makes "100%" mean true physical size on this display.
+   */
+  function displayScale(): number {
+    const ratio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
+    return clamp(ratio, 0.5, 4)
+  }
+
+  const zoomPercent = computed(() =>
+    Math.round((view.zoom / (PX_PER_MM * displayScale())) * 100),
+  )
 
   function notify(message: string) {
     notice.value = message
@@ -534,10 +561,14 @@ export function createDesigner() {
 
     c.on('object:scaling', (e: any) => {
       const target = e.target as FabricObject | undefined
-      if (!target || !isTableObject(target)) return
-      // Keep the inspector's frame and the inline overlay in sync while the
-      // Fabric controls are being dragged.
-      refreshSelection()
+      if (!target) return
+      // Never let a resize push content outside the page margins.
+      constrainToPrintable(target, true)
+      if (isTableObject(target)) {
+        // Keep the inspector's frame and the inline overlay in sync while the
+        // Fabric controls are being dragged.
+        refreshSelection()
+      }
     })
 
     c.on('object:moving', (e: any) => {
@@ -549,6 +580,14 @@ export function createDesigner() {
           top: Math.round(target.top / SNAP_STEP) * SNAP_STEP,
         })
       }
+      constrainToPrintable(target)
+      refreshSelection()
+    })
+
+    c.on('object:rotating', (e: any) => {
+      const target = e.target as FabricObject | undefined
+      if (!target) return
+      constrainToPrintable(target)
       refreshSelection()
     })
 
@@ -577,16 +616,57 @@ export function createDesigner() {
     })
 
     c.on('mouse:down', (e: any) => {
-      if (!tableEditing.value) return
       const target = e.target as FabricObject | undefined
+      const active = c.getActiveObject() as FabricObject | null
+      const isSelectedTable =
+        !!target && !!active && target === active && isTableObject(target)
+
+      if (!tableEditing.value) {
+        // A selected table can resize its rows / columns without entering
+        // cell editing first: dragging an internal border is enough.
+        if (!isSelectedTable || !target) return
+        const config = table.value ?? tableConfigOf(target)
+        const point = scenePointOfEvent(e)
+        if (!config || !point) return
+        const local = tableLocalPoint(target, config, point.x, point.y)
+        const divider = tableDividerAt(
+          config,
+          local.x,
+          local.y,
+          tableDividerTolerance(local.scaleX),
+        )
+        if (!divider) return
+        ;(e.e as MouseEvent | undefined)?.preventDefault?.()
+        beginTableDividerDrag(config, local, divider)
+        return
+      }
+
       if (!target || !isTableObject(target)) {
         // Clicking the page or another element leaves cell editing.
         endTableEdit()
         return
       }
-      if (target !== c.getActiveObject()) {
+      if (target !== active) {
         endTableEdit()
         return
+      }
+      // Dragging an internal column / row border resizes just that track,
+      // Excel-style, instead of starting a cell selection.
+      const config = table.value ?? tableConfigOf(target)
+      const point = scenePointOfEvent(e)
+      if (config && point) {
+        const local = tableLocalPoint(target, config, point.x, point.y)
+        const divider = tableDividerAt(
+          config,
+          local.x,
+          local.y,
+          tableDividerTolerance(local.scaleX),
+        )
+        if (divider) {
+          ;(e.e as MouseEvent | undefined)?.preventDefault?.()
+          beginTableDividerDrag(config, local, divider)
+          return
+        }
       }
       const cell = tableCellAtEvent(target, e)
       if (!cell) return
@@ -605,10 +685,69 @@ export function createDesigner() {
     })
 
     c.on('mouse:move', (e: any) => {
-      if (!tablePointerSelecting || !tableEditing.value) return
+      const active = c.getActiveObject() as FabricObject | null
+      if (!active || !isTableObject(active)) return
+      const editing = tableEditing.value
       const target = e.target as FabricObject | undefined
-      if (!target || !isTableObject(target)) return
-      const cell = tableCellAtEvent(target, e)
+      const config = table.value ?? tableConfigOf(active)
+      const point = scenePointOfEvent(e)
+      if (!config || !point) return
+      const local = tableLocalPoint(active, config, point.x, point.y)
+      const locked = (active as any).locked === true
+
+      if (tableDividerDrag) {
+        const position =
+          tableDividerDrag.kind === 'column' ? local.x : local.y
+        const size = tableDividerDrag.size + (position - tableDividerDrag.start)
+        const base = table.value ?? config
+        commitTableConfig(
+          tableDividerDrag.kind === 'column'
+            ? resizeColumn(base, tableDividerDrag.index, size)
+            : resizeRow(base, tableDividerDrag.index, size),
+        )
+        // Rebuilding replaces the group; keep it pinned while dragging.
+        const rebuilt = c.getActiveObject() as any
+        rebuilt?.set?.({ lockMovementX: true, lockMovementY: true })
+        return
+      }
+
+      // Outside cell-edit mode the table is only hit when the pointer is on
+      // it; restore movement when the pointer leaves.
+      if (!editing && target !== active) {
+        ;(active as any).set({
+          lockMovementX: locked,
+          lockMovementY: locked,
+          hoverCursor: 'move',
+        })
+        return
+      }
+
+      const divider = tableDividerAt(
+        config,
+        local.x,
+        local.y,
+        tableDividerTolerance(local.scaleX),
+      )
+      const cursor = divider
+        ? divider.kind === 'column'
+          ? 'col-resize'
+          : 'row-resize'
+        : editing
+          ? 'cell'
+          : 'move'
+      ;(active as any).hoverCursor = cursor
+      if (!editing) {
+        // Lock movement while over a divider so Fabric does not drag the
+        // whole table instead of resizing the track.
+        ;(active as any).set({
+          lockMovementX: locked || !!divider,
+          lockMovementY: locked || !!divider,
+        })
+      }
+      c.setCursor(cursor)
+
+      if (!editing || !tablePointerSelecting) return
+      const cell = cellAtPoint(config, local.x, local.y)
       if (!cell) return
       selectTableCells(cell.row, cell.col, true)
     })
@@ -662,13 +801,16 @@ export function createDesigner() {
     return tableCellAtScene(obj, config, point.x, point.y)
   }
 
-  /** Convert a scene point to a table cell coordinate, including rotation. */
-  function tableCellAtScene(
+  /**
+   * Convert a scene point to table-local millimetres (the table's top-left
+   * corner is the origin), including rotation and Fabric scaling.
+   */
+  function tableLocalPoint(
     obj: FabricObject,
     config: TableConfig,
     x: number,
     y: number,
-  ): { row: number; col: number } | null {
+  ): { x: number; y: number; scaleX: number; scaleY: number } {
     const anyObj = obj as any
     const scaleX = Math.abs(anyObj.scaleX ?? 1) || 1
     const scaleY = Math.abs(anyObj.scaleY ?? 1) || 1
@@ -683,9 +825,72 @@ export function createDesigner() {
     const centerY = (anyObj.top ?? 0) + (sin * width) / 2 + (cos * height) / 2
     const dx = x - centerX
     const dy = y - centerY
-    const localX = (dx * cos + dy * sin) / scaleX + getTableWidth(config) / 2
-    const localY = (-dx * sin + dy * cos) / scaleY + getTableHeight(config) / 2
-    return cellAtPoint(config, localX, localY)
+    return {
+      x: (dx * cos + dy * sin) / scaleX + getTableWidth(config) / 2,
+      y: (-dx * sin + dy * cos) / scaleY + getTableHeight(config) / 2,
+      scaleX,
+      scaleY,
+    }
+  }
+
+  /** Convert a scene point to a table cell coordinate, including rotation. */
+  function tableCellAtScene(
+    obj: FabricObject,
+    config: TableConfig,
+    x: number,
+    y: number,
+  ): { row: number; col: number } | null {
+    const local = tableLocalPoint(obj, config, x, y)
+    return cellAtPoint(config, local.x, local.y)
+  }
+
+  /**
+   * Hit-test an internal column / row divider. `tolerance` is in table-local
+   * millimetres, so callers divide their screen-pixel tolerance by zoom.
+   */
+  function tableDividerAt(
+    config: TableConfig,
+    localX: number,
+    localY: number,
+    tolerance: number,
+  ): { kind: 'column' | 'row'; index: number } | null {
+    const widths = getColumnWidths(config)
+    const heights = getRowHeights(config)
+    const totalWidth = widths.reduce((sum, value) => sum + value, 0)
+    const totalHeight = heights.reduce((sum, value) => sum + value, 0)
+    if (
+      localX < -tolerance ||
+      localY < -tolerance ||
+      localX > totalWidth + tolerance ||
+      localY > totalHeight + tolerance
+    ) {
+      return null
+    }
+
+    let best: { kind: 'column' | 'row'; index: number; distance: number } | null =
+      null
+    let x = 0
+    for (let col = 0; col < widths.length - 1; col += 1) {
+      x += widths[col]
+      const distance = Math.abs(localX - x)
+      if (distance <= tolerance && (!best || distance < best.distance)) {
+        best = { kind: 'column', index: col, distance }
+      }
+    }
+    let y = 0
+    for (let row = 0; row < heights.length - 1; row += 1) {
+      y += heights[row]
+      const distance = Math.abs(localY - y)
+      if (distance <= tolerance && (!best || distance < best.distance)) {
+        best = { kind: 'row', index: row, distance }
+      }
+    }
+    return best ? { kind: best.kind, index: best.index } : null
+  }
+
+  /** Screen-pixel divider tolerance expressed in table-local millimetres. */
+  function tableDividerTolerance(scale = 1): number {
+    return 3 / Math.max(0.01, view.zoom * Math.abs(scale || 1))
   }
 
   function bakeTransform(obj: FabricObject) {
@@ -776,16 +981,18 @@ export function createDesigner() {
   function fitToViewport() {
     if (!viewportWidth || !viewportHeight) return
     const padding = 56
+    const physical = PX_PER_MM * displayScale()
     const z = Math.min(
       (viewportWidth - padding * 2) / page.width,
       (viewportHeight - padding * 2) / page.height,
-      PX_PER_MM,
+      physical,
     )
-    view.zoom = clamp(round(z, 3), 0.3, PX_PER_MM)
+    view.zoom = clamp(round(z, 3), 0.3, physical)
   }
 
   function setZoom(zoom: number) {
-    view.zoom = clamp(round(zoom, 3), 0.3, 12)
+    const max = Math.max(12, PX_PER_MM * displayScale() * 2)
+    view.zoom = clamp(round(zoom, 3), 0.3, max)
   }
 
   function zoomIn() {
@@ -797,7 +1004,7 @@ export function createDesigner() {
   }
 
   function resetZoom() {
-    setZoom(PX_PER_MM)
+    setZoom(PX_PER_MM * displayScale())
   }
 
   function setPageSize(width: number, height: number) {
@@ -829,6 +1036,90 @@ export function createDesigner() {
   function setPageMarginVisible(visible: boolean) {
     page.marginVisible = visible
     scheduleCommit()
+  }
+
+  /**
+   * Printable area inside the page margins. Returns null when no margins are
+   * configured, in which case content is not constrained.
+   */
+  function printableBounds(): {
+    left: number
+    top: number
+    right: number
+    bottom: number
+    width: number
+    height: number
+  } | null {
+    const margin = page.margin
+    if (margin.top + margin.right + margin.bottom + margin.left <= 0.001) {
+      return null
+    }
+    const left = round(margin.left, 2)
+    const top = round(margin.top, 2)
+    const right = round(page.width - margin.right, 2)
+    const bottom = round(page.height - margin.bottom, 2)
+    if (right - left < 1 || bottom - top < 1) return null
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: right - left,
+      height: bottom - top,
+    }
+  }
+
+  /**
+   * Keep an object (or multi-selection) inside the printable area. With
+   * `limitScale`, an object that is larger than the printable area is shrunk
+   * to fit as well.
+   */
+  function constrainToPrintable(obj: FabricObject, limitScale = false) {
+    const bounds = printableBounds()
+    if (!bounds) return
+    const anyObj = obj as any
+    // Fabric only refreshes the cached coordinates after the transform action
+    // handler returns, so getBoundingRect() would lag one pointer event behind
+    // while moving / scaling. Refresh it before measuring.
+    obj.setCoords()
+    if (limitScale && Math.abs(anyObj.angle ?? 0) < 0.01) {
+      const rect = obj.getBoundingRect()
+      const scaleX = Math.abs(anyObj.scaleX ?? 1) || 1
+      const scaleY = Math.abs(anyObj.scaleY ?? 1) || 1
+      let nextScaleX = scaleX
+      let nextScaleY = scaleY
+      if (rect.width > bounds.width && rect.width > 0) {
+        nextScaleX = scaleX * (bounds.width / rect.width)
+      }
+      if (rect.height > bounds.height && rect.height > 0) {
+        nextScaleY = scaleY * (bounds.height / rect.height)
+      }
+      if (nextScaleX !== scaleX || nextScaleY !== scaleY) {
+        anyObj.set({ scaleX: nextScaleX, scaleY: nextScaleY })
+        obj.setCoords()
+      }
+    }
+
+    const rect = obj.getBoundingRect()
+    let dx = 0
+    let dy = 0
+    if (rect.left < bounds.left) {
+      dx = bounds.left - rect.left
+    } else if (rect.left + rect.width > bounds.right) {
+      dx = bounds.right - (rect.left + rect.width)
+    }
+    if (rect.top < bounds.top) {
+      dy = bounds.top - rect.top
+    } else if (rect.top + rect.height > bounds.bottom) {
+      dy = bounds.bottom - (rect.top + rect.height)
+    }
+    if (dx || dy) {
+      anyObj.set({
+        left: (anyObj.left ?? 0) + dx,
+        top: (anyObj.top ?? 0) + dy,
+      })
+      obj.setCoords()
+    }
   }
 
   // ------------------------------------------------------------- watermark
@@ -1088,6 +1379,12 @@ export function createDesigner() {
     const first = objs[0] as any
     const single = objs.length === 1
     const kind = single ? kindOf(objs[0]) : null
+    let textCount = 0
+    let tableCount = 0
+    for (const obj of objs) {
+      if (isTextType(typeOf(obj))) textCount += 1
+      else if (isTableObject(obj)) tableCount += 1
+    }
 
     selection.count = objs.length
     selection.kind = kind
@@ -1098,6 +1395,8 @@ export function createDesigner() {
     selection.isLine = kind === 'line'
     selection.isTable = kind === 'table'
     selection.isCode = kind === 'qrcode' || kind === 'barcode'
+    selection.textCount = textCount
+    selection.tableCount = tableCount
 
     if (single) {
       selection.layout.left = round(first.left ?? 0, 1)
@@ -1128,23 +1427,39 @@ export function createDesigner() {
     selection.style.name = first.name || (kind ? KIND_LABEL[kind] : '')
     selection.style.visible = first.visible !== false
 
-    selection.code.content = String(first.codeText ?? '')
-    selection.text.content = first.text ?? ''
-    selection.text.fontSize = round((first.fontSize ?? 0) * Math.abs(first.scaleY ?? 1), 2)
-    selection.text.fontFamily = first.fontFamily || DEFAULT_FONT
-    selection.text.fontWeight = normalizeWeight(first.fontWeight)
-    selection.text.fontStyle = first.fontStyle === 'italic' ? 'italic' : 'normal'
-    selection.text.underline = !!first.underline
+    // For a multi-selection, show the style of the first text element (or
+    // table) so shared font controls display a meaningful value.
+    const textSource: any = single
+      ? first
+      : ((objs.find((obj) => isTextType(typeOf(obj))) as any) ??
+        (objs.find((obj) => isTableObject(obj)) as any) ??
+        first)
+    const tableSource =
+      textSource && isTableObject(textSource) ? tableConfigOf(textSource) : null
+
+    selection.code.content = single ? String(first.codeText ?? '') : ''
+    selection.text.content = single ? first.text ?? '' : ''
+    selection.text.fontSize = round(
+      (tableSource ? tableSource.fontSize : (textSource.fontSize ?? 0)) *
+        Math.abs(textSource.scaleY ?? 1),
+      2,
+    )
+    selection.text.fontFamily = tableSource
+      ? tableSource.fontFamily
+      : textSource.fontFamily || DEFAULT_FONT
+    selection.text.fontWeight = normalizeWeight(textSource.fontWeight)
+    selection.text.fontStyle = textSource.fontStyle === 'italic' ? 'italic' : 'normal'
+    selection.text.underline = !!textSource.underline
     selection.text.letterSpacing = round(
-      ((first.charSpacing ?? 0) *
-        (first.fontSize ?? 0) *
-        Math.abs(first.scaleY ?? 1)) /
+      ((textSource.charSpacing ?? 0) *
+        (textSource.fontSize ?? 0) *
+        Math.abs(textSource.scaleY ?? 1)) /
         1000,
       2,
     )
-    selection.text.textAlign = first.textAlign || 'left'
-    selection.text.lineHeight = round(first.lineHeight ?? 1.3, 2)
-    selection.text.backgroundColor = toHexColor(first.backgroundColor)
+    selection.text.textAlign = textSource.textAlign || 'left'
+    selection.text.lineHeight = round(textSource.lineHeight ?? 1.3, 2)
+    selection.text.backgroundColor = toHexColor(textSource.backgroundColor)
 
     sinkTableSelection()
 
@@ -1306,9 +1621,23 @@ export function createDesigner() {
   function nextPosition(width: number, height: number) {
     const count = canvas?.getObjects().length ?? 0
     const offset = (count % 10) * 3
+    const bounds = printableBounds() ?? {
+      left: 0,
+      top: 0,
+      width: page.width,
+      height: page.height,
+    }
+    const left = bounds.left + (bounds.width - width) / 2 + offset
+    const top = bounds.top + (bounds.height - height) / 2 + offset
     return {
-      left: Math.max(0, round(page.width / 2 - width / 2 + offset, 1)),
-      top: Math.max(0, round(page.height / 2 - height / 2 + offset, 1)),
+      left: round(
+        clamp(left, bounds.left, Math.max(bounds.left, bounds.left + bounds.width - width)),
+        1,
+      ),
+      top: round(
+        clamp(top, bounds.top, Math.max(bounds.top, bounds.top + bounds.height - height)),
+        1,
+      ),
     }
   }
 
@@ -1427,7 +1756,9 @@ export function createDesigner() {
 
   function addTable(rows = 3, cols = 3) {
     if (!canvas) return
-    const width = Math.min(120, Math.max(20, page.width - 30))
+    const bounds = printableBounds()
+    const available = bounds ? bounds.width : page.width - 30
+    const width = Math.max(2, Math.min(120, available))
     const config = createTableConfig(rows, cols, width)
     const size = getTableSize(config)
     const group = buildTableObject(config)
@@ -1617,6 +1948,7 @@ export function createDesigner() {
           visible: true,
         })
         clone.setCoords()
+        constrainToPrintable(clone)
         canvas.add(clone)
         clones.push(clone)
       }
@@ -1754,13 +2086,15 @@ export function createDesigner() {
       top: (active.top ?? 0) + dy,
     })
     active.setCoords()
+    constrainToPrintable(active)
     canvas.requestRenderAll()
     refreshSelection()
     scheduleCommit()
   }
 
   function applyWidth(obj: any, value: number) {
-    const v = Math.max(0.2, value)
+    const bounds = printableBounds()
+    const v = Math.max(0.2, bounds ? Math.min(value, bounds.width) : value)
     const sx = Math.abs(obj.scaleX || 1)
     if (isImageType(typeOf(obj))) {
       // Images keep natural pixel dimensions; scaling is what changes mm size.
@@ -1773,7 +2107,8 @@ export function createDesigner() {
   }
 
   function applyHeight(obj: any, value: number) {
-    const v = Math.max(0.05, value)
+    const bounds = printableBounds()
+    const v = Math.max(0.05, bounds ? Math.min(value, bounds.height) : value)
     const sy = Math.abs(obj.scaleY || 1)
     if (isImageType(typeOf(obj))) {
       obj.set({ scaleY: v / Math.max(1, obj.height || 1) })
@@ -1863,6 +2198,118 @@ export function createDesigner() {
       }
 
       obj.setCoords()
+      if (
+        single &&
+        (patch.left !== undefined ||
+          patch.top !== undefined ||
+          patch.width !== undefined ||
+          patch.height !== undefined ||
+          patch.angle !== undefined)
+      ) {
+        constrainToPrintable(obj)
+      }
+    }
+
+    canvas.requestRenderAll()
+    refreshSelection()
+    refreshLayers()
+    scheduleCommit()
+  }
+
+  /**
+   * Apply font options to every selected text element and table. Used when
+   * several objects are selected together; tables are rebuilt in place and
+   * the multi-selection is restored afterwards.
+   */
+  function updateSelectedTextStyle(patch: {
+    fontFamily?: string
+    fontSize?: number
+    fontWeight?: 'normal' | 'bold'
+    fontStyle?: 'normal' | 'italic'
+    underline?: boolean
+  }) {
+    if (!canvas) return
+    const objs = canvas.getActiveObjects() as any[]
+    if (!objs.length) return
+    const nextObjs: FabricObject[] = []
+    const replaced: Array<{ old: FabricObject; next: FabricObject }> = []
+
+    for (const obj of objs) {
+      if (isTextType(typeOf(obj))) {
+        if (patch.fontFamily !== undefined) {
+          obj.set('fontFamily', patch.fontFamily)
+        }
+        if (patch.fontSize !== undefined) {
+          obj.set(
+            'fontSize',
+            Math.max(0.5, patch.fontSize / Math.abs(obj.scaleY || 1)),
+          )
+        }
+        if (patch.fontWeight !== undefined) {
+          obj.set('fontWeight', patch.fontWeight)
+        }
+        if (patch.fontStyle !== undefined) {
+          obj.set('fontStyle', patch.fontStyle)
+        }
+        if (patch.underline !== undefined) obj.set('underline', patch.underline)
+        obj.setCoords()
+        nextObjs.push(obj)
+        continue
+      }
+
+      if (!isTableObject(obj)) {
+        nextObjs.push(obj)
+        continue
+      }
+      let config = tableConfigOf(obj)
+      if (!config) {
+        nextObjs.push(obj)
+        continue
+      }
+      // Bake any pending Fabric scale so the rebuilt table keeps its size.
+      const sx = Math.abs(obj.scaleX ?? 1)
+      const sy = Math.abs(obj.scaleY ?? 1)
+      if (Math.abs(sx - 1) > 1e-6 || Math.abs(sy - 1) > 1e-6) {
+        config = setTableHeight(
+          setTableWidth(config, round(getTableWidth(config) * sx, 2)),
+          round(getTableHeight(config) * sy, 2),
+        )
+      }
+      if (patch.fontFamily !== undefined) config.fontFamily = patch.fontFamily
+      if (patch.fontSize !== undefined) config.fontSize = patch.fontSize
+      // `left` / `top` are relative to the active selection, so capture the
+      // absolute centre and total angle before the group is dissolved.
+      const center = obj.getCenterPoint()
+      const totalAngle = obj.getTotalAngle()
+      const normalized = normalizeTableConfig(config)
+      const group = buildTableObject(normalized)
+      group.set({
+        angle: totalAngle,
+        scaleX: 1,
+        scaleY: 1,
+        opacity: obj.opacity ?? 1,
+        visible: obj.visible !== false,
+        name: obj.name || KIND_LABEL.table,
+        elementId: obj.elementId || uid(),
+        locked: obj.locked === true,
+      } as any)
+      group.setPositionByOrigin(center, 'center', 'center')
+      ;(group as any).customKind = 'table'
+      group.set(CONTROL_STYLE as any)
+      applyLock(group, obj.locked === true)
+      replaced.push({ old: obj, next: group })
+      nextObjs.push(group)
+    }
+
+    if (replaced.length) {
+      canvas.discardActiveObject()
+      for (const { old, next } of replaced) {
+        const index = canvas.getObjects().indexOf(old)
+        canvas.remove(old)
+        canvas.insertAt(Math.max(0, index), next)
+        next.setCoords()
+      }
+      selectObjects(nextObjs)
     }
 
     canvas.requestRenderAll()
@@ -1910,6 +2357,11 @@ export function createDesigner() {
       if (!config) continue
       if (patch.fontFamily !== undefined) config.fontFamily = patch.fontFamily
       if (fontSize !== undefined) config.fontSize = fontSize
+      // A global font change is meant to win over per-cell overrides.
+      for (const style of Object.values(config.styles)) {
+        if (patch.fontFamily !== undefined) delete style.fontFamily
+        if (fontSize !== undefined) delete style.fontSize
+      }
       const next = normalizeTableConfig(config)
       const group = buildTableObject(next)
       const index = canvas.getObjects().indexOf(obj)
@@ -2081,9 +2533,46 @@ export function createDesigner() {
       } as any)
     } else {
       applyLock(obj, (obj as any).locked === true)
-      obj.set({ hasBorders: true } as any)
+      obj.set({ hasBorders: true, hoverCursor: 'move' } as any)
     }
     obj.setCoords()
+  }
+
+  /** Start dragging one internal column / row border. */
+  function beginTableDividerDrag(
+    config: TableConfig,
+    local: { x: number; y: number },
+    divider: { kind: 'column' | 'row'; index: number },
+  ) {
+    const sizes =
+      divider.kind === 'column'
+        ? getColumnWidths(config)
+        : getRowHeights(config)
+    tableDividerDrag = {
+      kind: divider.kind,
+      index: divider.index,
+      start: divider.kind === 'column' ? local.x : local.y,
+      size: sizes[divider.index],
+    }
+    const active = canvas?.getActiveObject() as any
+    active?.set?.({ lockMovementX: true, lockMovementY: true })
+    const stop = () => {
+      tableDividerDrag = null
+      window.removeEventListener('pointerup', stop)
+      if (!canvas) return
+      if (tableEditing.value) {
+        canvas.setCursor('cell')
+      } else {
+        const current = canvas.getActiveObject() as any
+        current?.set?.({
+          lockMovementX: current.locked === true,
+          lockMovementY: current.locked === true,
+          hoverCursor: 'move',
+        })
+        canvas.setCursor('move')
+      }
+    }
+    window.addEventListener('pointerup', stop)
   }
 
   /** Enter direct cell editing: Fabric owns hit-testing and the range overlay. */
@@ -2094,6 +2583,7 @@ export function createDesigner() {
     tableEditing.value = true
     // The range is painted by Fabric, so its normal border would double up.
     setTableControlsEditing(active, true)
+    canvas.setCursor('cell')
     canvas.requestRenderAll()
   }
 
@@ -2104,7 +2594,9 @@ export function createDesigner() {
     tableEditing.value = false
     requestedCellEdit.value = null
     tablePointerSelecting = false
+    tableDividerDrag = null
     if (!canvas) return
+    canvas.setCursor('default')
     // The selection may already have moved to another object (e.g. via the
     // layers panel), so find the edited table by id rather than by selection.
     const target = canvas
@@ -2236,19 +2728,54 @@ export function createDesigner() {
     commitTableConfig(normalizeTableConfig({ ...table.value, ...patch }))
   }
 
+  /** Move the selected table back inside the margins after a size change. */
+  function settleTablePosition() {
+    if (!canvas) return
+    const active = canvas.getActiveObject()
+    if (!active || !isTableObject(active)) return
+    constrainToPrintable(active)
+    active.setCoords()
+    canvas.requestRenderAll()
+    refreshSelection()
+  }
+
   function setTableSize(rows: number, cols: number) {
     if (!table.value) return
-    commitTableConfig(resizeTable(table.value, rows, cols))
+    let next = resizeTable(table.value, rows, cols)
+    const bounds = printableBounds()
+    if (bounds) {
+      next = setTableWidth(
+        next,
+        Math.min(getTableWidth(next), bounds.width),
+      )
+      next = setTableHeight(
+        next,
+        Math.min(getTableHeight(next), bounds.height),
+      )
+    }
+    commitTableConfig(next)
+    settleTablePosition()
   }
 
   function setTableWidthValue(width: number) {
     if (!table.value) return
-    commitTableConfig(setTableWidth(table.value, width))
+    const bounds = printableBounds()
+    commitTableConfig(
+      setTableWidth(table.value, bounds ? Math.min(width, bounds.width) : width),
+    )
+    settleTablePosition()
   }
 
   function setTableHeightValue(height: number) {
     if (!table.value) return
-    commitTableConfig(setTableHeight(table.value, height))
+    const bounds = printableBounds()
+    commitTableConfig(
+      setTableHeight(
+        table.value,
+        bounds ? Math.min(height, bounds.height) : height,
+      ),
+    )
+    settleTablePosition()
   }
 
   function toggleTableBorder(side: TableBorderSide) {
@@ -3114,6 +3641,7 @@ export function createDesigner() {
     importDataFields,
     // editing
     updateSelected,
+    updateSelectedTextStyle,
     updateCodeContent,
     applyGlobalTextStyle,
     deleteSelected,

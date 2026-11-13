@@ -25,6 +25,12 @@ export interface TableCell {
   fill?: string
   /** cell text colour; an empty string falls back to the table colour */
   color?: string
+  /** cell font size in millimetres; omitted means the table default */
+  fontSize?: number
+  /** cell font family; omitted means the table default */
+  fontFamily?: string
+  italic?: boolean
+  underline?: boolean
   /** per-side border visibility; `false` hides that side (default visible) */
   borderTop?: boolean
   borderRight?: boolean
@@ -227,6 +233,10 @@ export interface SelectionState {
   isLine: boolean
   isTable: boolean
   isCode: boolean
+  /** number of selected text elements (1 for a single text selection) */
+  textCount: number
+  /** number of selected tables (1 for a single table selection) */
+  tableCount: number
   layout: {
     left: number
     top: number
@@ -305,6 +315,8 @@ export function emptySelection(): SelectionState {
     isLine: false,
     isTable: false,
     isCode: false,
+    textCount: 0,
+    tableCount: 0,
     layout: {
       left: 0,
       top: 0,

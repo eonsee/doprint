@@ -16,12 +16,14 @@ import {
   AlignVerticalJustifyStart,
   Bold,
   Check,
+  Italic,
   Merge,
   PanelBottom,
   PanelLeft,
   PanelRight,
   PanelTop,
   Split,
+  Underline,
 } from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
 import {
@@ -128,7 +130,7 @@ const editorStyle = computed(() => {
   // Match tableFabric's effective font size so the edited text does not jump.
   const fontSize = Math.max(
     0.5,
-    Math.min(config.fontSize, availableHeight * 1.25),
+    Math.min(cell.fontSize ?? config.fontSize, availableHeight * 1.25),
   )
   const lineHeight = 1.15
   let paddingTop = padding
@@ -148,8 +150,10 @@ const editorStyle = computed(() => {
     padding: `${paddingTop * view.zoom}px ${padding * view.zoom}px ${padding * view.zoom}px`,
     fontSize: `${fontSize * view.zoom}px`,
     lineHeight,
-    fontFamily: config.fontFamily,
+    fontFamily: cell.fontFamily || config.fontFamily,
     fontWeight: cell.bold ? 'bold' : 'normal',
+    fontStyle: cell.italic ? 'italic' : 'normal',
+    textDecoration: cell.underline ? 'underline' : 'none',
     color: cell.color || config.color || '#111827',
     textAlign: cell.align || 'left',
     background: cell.fill || config.background || '#ffffff',
@@ -321,8 +325,15 @@ function setValign(valign: TableVAlign) {
 }
 
 function toggleBold() {
-  const next = !anchorCell.value.bold
-  designer.updateSelectedCells({ bold: next })
+  designer.updateSelectedCells({ bold: !anchorCell.value.bold })
+}
+
+function toggleItalic() {
+  designer.updateSelectedCells({ italic: !anchorCell.value.italic })
+}
+
+function toggleUnderline() {
+  designer.updateSelectedCells({ underline: !anchorCell.value.underline })
 }
 
 function onToolbarPointerDown(event: MouseEvent) {
@@ -476,6 +487,24 @@ onBeforeUnmount(() => {
         @click="toggleBold"
       >
         <Bold :size="15" />
+      </button>
+      <button
+        type="button"
+        class="cte-btn icon"
+        title="斜体"
+        :class="{ active: anchorCell.italic === true }"
+        @click="toggleItalic"
+      >
+        <Italic :size="15" />
+      </button>
+      <button
+        type="button"
+        class="cte-btn icon"
+        title="下划线"
+        :class="{ active: anchorCell.underline === true }"
+        @click="toggleUnderline"
+      >
+        <Underline :size="15" />
       </button>
       <span class="cte-sep"></span>
       <button

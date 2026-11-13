@@ -172,17 +172,21 @@ export function buildTableObject(config: TableConfig): Group {
     )
     const availableWidth = Math.max(0.5, region.width - padding * 2)
     const availableHeight = Math.max(0.5, region.height - padding * 2)
+    // A cell may override the table's font size / family; everything else
+    // still inherits from the table-level defaults.
     const fontSize = Math.max(
       0.5,
-      Math.min(config.fontSize, availableHeight * 1.25),
+      Math.min(style.fontSize ?? config.fontSize, availableHeight * 1.25),
     )
     const text = new Textbox(value, {
       left: region.x + padding,
       top: region.y + padding,
       width: availableWidth,
       fontSize,
-      fontFamily: config.fontFamily,
+      fontFamily: style.fontFamily || config.fontFamily,
       fontWeight: style.bold ? 'bold' : 'normal',
+      fontStyle: style.italic ? 'italic' : 'normal',
+      underline: style.underline === true,
       fill: style.color || config.color || '#111827',
       textAlign: style.align || 'left',
       lineHeight: 1.15,

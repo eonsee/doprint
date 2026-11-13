@@ -78,8 +78,12 @@ const STYLE_KEYS = [
   'align',
   'valign',
   'bold',
+  'italic',
+  'underline',
   'fill',
   'color',
+  'fontSize',
+  'fontFamily',
   'borderTop',
   'borderRight',
   'borderBottom',
@@ -130,8 +134,18 @@ function cleanStyle(input: unknown): TableCellStyle {
   // `false` is meaningful for bold and the border flags: it overrides a style
   // inherited from the row (for example, un-bolding one header cell).
   if (raw.bold === true || raw.bold === false) style.bold = raw.bold
+  if (raw.italic === true || raw.italic === false) style.italic = raw.italic
+  if (raw.underline === true || raw.underline === false) {
+    style.underline = raw.underline
+  }
   if (typeof raw.fill === 'string') style.fill = raw.fill
   if (typeof raw.color === 'string') style.color = raw.color
+  if (typeof raw.fontSize === 'number' && Number.isFinite(raw.fontSize)) {
+    style.fontSize = round(clamp(raw.fontSize, 0.5, 300 * PX_TO_MM), 2)
+  }
+  if (typeof raw.fontFamily === 'string' && raw.fontFamily.trim()) {
+    style.fontFamily = raw.fontFamily.trim()
+  }
   if (raw.borderTop === true || raw.borderTop === false) {
     style.borderTop = raw.borderTop
   }
@@ -964,8 +978,12 @@ function stylePatchOf(patch: Partial<TableCell>): TableCellStyle {
   if (patch.align !== undefined) style.align = patch.align
   if (patch.valign !== undefined) style.valign = patch.valign
   if (patch.bold !== undefined) style.bold = patch.bold
+  if (patch.italic !== undefined) style.italic = patch.italic
+  if (patch.underline !== undefined) style.underline = patch.underline
   if (patch.fill !== undefined) style.fill = patch.fill
   if (patch.color !== undefined) style.color = patch.color
+  if (patch.fontSize !== undefined) style.fontSize = patch.fontSize
+  if (patch.fontFamily !== undefined) style.fontFamily = patch.fontFamily
   if (patch.borderTop !== undefined) style.borderTop = patch.borderTop
   if (patch.borderRight !== undefined) style.borderRight = patch.borderRight
   if (patch.borderBottom !== undefined) {
@@ -1213,6 +1231,57 @@ export function resizeTable(
     (merge) => merge.endRow < nextRows && merge.endColumn < nextCols,
   )
   pruneStyles(next)
+  return next
+}
+
+const MIN_TRACK_SIZE = 0.5
+
+/**
+ * Drag-resize a row by moving its bottom border. The next row absorbs the
+ * delta, so the table keeps its overall height and only the two adjacent
+ * rows change size.
+ */
+export function resizeRow(
+  config: TableConfig,
+  row: number,
+  height: number,
+): TableConfig {
+  if (row < 0 || row >= config.rowCount - 1) return cloneTableConfig(config)
+  const current = getRowHeight(config, row)
+  const neighbour = getRowHeight(config, row + 1)
+  const min = MIN_TRACK_SIZE
+  const max = Math.max(min, current + neighbour - min)
+  const value = round(clamp(height, min, max), 2)
+  const rest = round(current + neighbour - value, 2)
+  const next = cloneTableConfig(config)
+  const styleId = next.rowData[row]?.s
+  const neighbourStyleId = next.rowData[row + 1]?.s
+  next.rowData[row] = styleId ? { h: value, s: styleId } : { h: value }
+  next.rowData[row + 1] = neighbourStyleId
+    ? { h: rest, s: neighbourStyleId }
+    : { h: rest }
+  return next
+}
+
+/**
+ * Drag-resize a column by moving its right border. The next column absorbs
+ * the delta, so the table's width and position stay fixed.
+ */
+export function resizeColumn(
+  config: TableConfig,
+  col: number,
+  width: number,
+): TableConfig {
+  if (col < 0 || col >= config.columnCount - 1) return cloneTableConfig(config)
+  const current = getColumnWidth(config, col)
+  const neighbour = getColumnWidth(config, col + 1)
+  const min = MIN_TRACK_SIZE
+  const max = Math.max(min, current + neighbour - min)
+  const value = round(clamp(width, min, max), 2)
+  const rest = round(current + neighbour - value, 2)
+  const next = cloneTableConfig(config)
+  next.columnData[col] = { w: value }
+  next.columnData[col + 1] = { w: rest }
   return next
 }
 

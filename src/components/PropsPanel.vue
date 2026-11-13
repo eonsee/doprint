@@ -55,6 +55,14 @@ const {
 } = designer
 
 const isMulti = computed(() => selection.count > 1)
+const multiFontTargets = computed(
+  () =>
+    isMulti.value &&
+    (selection.textCount > 0 || selection.tableCount > 0),
+)
+const multiTextSelected = computed(
+  () => isMulti.value && selection.textCount > 0,
+)
 const fontSizePx = computed(() => round(selection.text.fontSize * PX_PER_MM, 1))
 const opacityPercent = computed(() =>
   Math.round(selection.layout.opacity * 100),
@@ -88,6 +96,18 @@ function setOpacityPercent(value: number) {
 
 function setFontSizePx(value: number) {
   update({ fontSize: clamp(value, 4, 300) * PX_TO_MM })
+}
+
+function setMultiFontSizePx(value: number) {
+  designer.updateSelectedTextStyle({
+    fontSize: clamp(value, 4, 300) * PX_TO_MM,
+  })
+}
+
+function onMultiFontFamily(event: Event) {
+  designer.updateSelectedTextStyle({
+    fontFamily: (event.target as HTMLSelectElement).value,
+  })
 }
 
 function setTextAlign(align: string) {
@@ -345,6 +365,7 @@ function align(action: AlignAction) {
         </label>
         <p class="field-note">
           内容区 {{ contentWidth }} × {{ contentHeight }} mm，虚线框只用于设计参考，不会打印。
+          设置边距后，元素的移动、缩放、新建和键盘微调都会被限制在内容区内。
         </p>
       </InspectorSection>
 
@@ -460,7 +481,7 @@ function align(action: AlignAction) {
           </button>
         </div>
         <p v-if="isMulti" class="multi-note">
-          可批量修改颜色、描边与透明度，使用下方对齐工具整理位置。
+          可批量修改颜色、描边、透明度以及文字样式，使用下方对齐工具整理位置。
         </p>
       </section>
 
@@ -501,6 +522,86 @@ function align(action: AlignAction) {
         </div>
         <p v-if="!canDistribute" class="field-note">
           等距分布需要至少 3 个元素
+        </p>
+      </InspectorSection>
+
+      <InspectorSection v-if="multiFontTargets" title="文字样式">
+        <label class="select-field">
+          <span>字体</span>
+          <select
+            :value="selection.text.fontFamily"
+            @change="onMultiFontFamily"
+          >
+            <option
+              v-for="font in FONT_OPTIONS"
+              :key="font.value"
+              :value="font.value"
+            >
+              {{ font.label }}
+            </option>
+          </select>
+        </label>
+
+        <div class="field-grid">
+          <FontSizeSelect
+            label="字号"
+            :model-value="fontSizePx"
+            @update:model-value="setMultiFontSizePx"
+          />
+        </div>
+
+        <template v-if="multiTextSelected">
+          <div class="text-tools">
+            <div class="segmented">
+              <button
+                title="加粗"
+                :class="{ active: selection.text.fontWeight === 'bold' }"
+                @click="toggleBold"
+              >
+                <Bold :size="15" />
+              </button>
+              <button
+                title="斜体"
+                :class="{ active: selection.text.fontStyle === 'italic' }"
+                @click="toggleItalic"
+              >
+                <Italic :size="15" />
+              </button>
+              <button
+                title="下划线"
+                :class="{ active: selection.text.underline }"
+                @click="toggleUnderline"
+              >
+                <Underline :size="15" />
+              </button>
+            </div>
+            <div class="segmented">
+              <button
+                title="左对齐"
+                :class="{ active: (selection.text.textAlign || 'left') === 'left' }"
+                @click="setTextAlign('left')"
+              >
+                <AlignLeft :size="15" />
+              </button>
+              <button
+                title="居中"
+                :class="{ active: selection.text.textAlign === 'center' }"
+                @click="setTextAlign('center')"
+              >
+                <AlignCenter :size="15" />
+              </button>
+              <button
+                title="右对齐"
+                :class="{ active: selection.text.textAlign === 'right' }"
+                @click="setTextAlign('right')"
+              >
+                <AlignRight :size="15" />
+              </button>
+            </div>
+          </div>
+        </template>
+        <p v-else class="field-note">
+          当前选区只包含表格，字体和字号会修改表格的默认值。
         </p>
       </InspectorSection>
 

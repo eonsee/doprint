@@ -6,6 +6,7 @@ import {
   AlignRight,
   Bold,
   Check,
+  Italic,
   Merge,
   PanelBottom,
   PanelLeft,
@@ -13,6 +14,7 @@ import {
   PanelTop,
   Pencil,
   Split,
+  Underline,
 } from 'lucide-vue-next'
 import BindingPicker from './ui/BindingPicker.vue'
 import ColorField from './ui/ColorField.vue'
@@ -91,6 +93,18 @@ const cellText = computed(() => activeCell.value.text ?? '')
 const fontSizePx = computed(() =>
   table.value ? round(table.value.fontSize * PX_PER_MM, 1) : 0,
 )
+/** Effective values for the selected cell, not the table defaults. */
+const cellFontSizePx = computed(() =>
+  table.value
+    ? round(
+        (activeCell.value.fontSize ?? table.value.fontSize) * PX_PER_MM,
+        1,
+      )
+    : 0,
+)
+const cellFontFamily = computed(
+  () => activeCell.value.fontFamily || table.value?.fontFamily || 'SimSun',
+)
 const gridStyle = computed(() => {
   if (!table.value) return {}
   return {
@@ -136,6 +150,9 @@ function cellStyle(region: TableRegion) {
     background: cell.fill || '#ffffff',
     color: cell.color || undefined,
     fontWeight: cell.bold ? '650' : undefined,
+    fontStyle: cell.italic ? 'italic' : undefined,
+    textDecoration: cell.underline ? 'underline' : undefined,
+    fontFamily: cell.fontFamily || table.value?.fontFamily || undefined,
     textAlign: cell.align ?? 'left',
     justifyContent,
   }
@@ -192,6 +209,26 @@ function setFontSizePx(value: number) {
   designer.updateTableStyle({
     fontSize: clamp(value, 4, 300) * PX_TO_MM,
   })
+}
+
+function setCellFontSizePx(value: number) {
+  designer.updateSelectedCells({
+    fontSize: clamp(value, 4, 300) * PX_TO_MM,
+  })
+}
+
+function onCellFontFamily(event: Event) {
+  designer.updateSelectedCells({
+    fontFamily: (event.target as HTMLSelectElement).value,
+  })
+}
+
+function toggleItalic() {
+  designer.updateSelectedCells({ italic: !activeCell.value.italic })
+}
+
+function toggleUnderline() {
+  designer.updateSelectedCells({ underline: !activeCell.value.underline })
 }
 
 function onFontFamily(event: Event) {
@@ -301,6 +338,8 @@ function toggleCanvasEditing() {
         选中表格后可拖动 8 个控制点缩放整张表格（角点按 Shift
         等比缩放），上方旋转控制点可调整角度。双击表格进入单元格编辑：拖拽框选、Shift
         扩展选区，双击或直接输入即可编辑内容，工具栏可合并、拆分及显示或隐藏选区四边边框。
+        选中表格后无需双击，把指针移到表格内部的列线或行线上，光标变成双向箭头即可拖动：
+        相邻的列或行会反向补偿，整张表格的尺寸和位置保持不变。
       </p>
     </InspectorSection>
 
@@ -382,8 +421,46 @@ function toggleCanvasEditing() {
           >
             <Bold :size="15" />
           </button>
+          <button
+            title="斜体"
+            :class="{ active: activeCell.italic === true }"
+            @click="toggleItalic"
+          >
+            <Italic :size="15" />
+          </button>
+          <button
+            title="下划线"
+            :class="{ active: activeCell.underline === true }"
+            @click="toggleUnderline"
+          >
+            <Underline :size="15" />
+          </button>
         </div>
       </div>
+
+      <label class="select-field">
+        <span>单元格字体</span>
+        <select :value="cellFontFamily" @change="onCellFontFamily">
+          <option
+            v-for="font in FONT_OPTIONS"
+            :key="font.value"
+            :value="font.value"
+          >
+            {{ font.label }}
+          </option>
+        </select>
+      </label>
+
+      <div class="field-grid">
+        <FontSizeSelect
+          label="单元格字号"
+          :model-value="cellFontSizePx"
+          @update:model-value="setCellFontSizePx"
+        />
+      </div>
+      <p class="field-note">
+        这里的字体和字号只作用于当前选中的单元格（或选区），不会影响整张表格。
+      </p>
 
       <div class="inline-row">
         <span>选区边框</span>
@@ -435,7 +512,7 @@ function toggleCanvasEditing() {
 
     <InspectorSection title="表格样式">
       <label class="select-field">
-        <span>字体</span>
+        <span>默认字体</span>
         <select :value="table.fontFamily" @change="onFontFamily">
           <option
             v-for="font in FONT_OPTIONS"
@@ -449,7 +526,7 @@ function toggleCanvasEditing() {
 
       <div class="field-grid">
         <FontSizeSelect
-          label="字号"
+          label="默认字号"
           :model-value="fontSizePx"
           @update:model-value="setFontSizePx"
         />
@@ -483,6 +560,10 @@ function toggleCanvasEditing() {
         :model-value="table.background"
         @update:model-value="designer.updateTableStyle({ background: $event })"
       />
+      <p class="field-note">
+        默认字体和字号作为整张表格的基准；在“单元格”中单独设置的字体、
+        字号会覆盖这里的默认值。
+      </p>
     </InspectorSection>
   </div>
 </template>
