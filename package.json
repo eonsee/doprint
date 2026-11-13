@@ -4,18 +4,24 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host",
+    "dev": "concurrently -k -n api,web -c cyan,green \"node server/index.mjs\" \"vite --host\"",
+    "dev:web": "vite --host",
+    "dev:api": "node server/index.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server/index.mjs"
   },
   "dependencies": {
+    "express": "^4.22.3",
     "fabric": "6.9.1",
     "lucide-vue-next": "0.468.0",
+    "mysql2": "^3.24.6",
     "pdf-lib": "^1.17.1",
     "vue": "^3.5.13"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "4.6.2",
+    "concurrently": "^8.2.2",
     "typescript": "5.4.5",
     "vite": "4.5.14"
   }

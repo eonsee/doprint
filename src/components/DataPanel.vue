@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { PlugZap, Plus, Trash2 } from 'lucide-vue-next'
+import DataSourceModal from './DataSourceModal.vue'
 import InspectorSection from './ui/InspectorSection.vue'
 import { useDesigner } from '../designer/context'
 
 const designer = useDesigner()
 const { dataFields } = designer
 
+const sourceOpen = ref(false)
 const jsonText = ref('')
 
 function addField() {
@@ -82,6 +84,19 @@ function importJson() {
       </button>
     </InspectorSection>
 
+    <InspectorSection title="数据源">
+      <p class="data-hint">
+        从数据库读取表结构，把字段和首行示例值导入下方「示例数据」。
+      </p>
+      <button class="btn ghost wide" @click="sourceOpen = true">
+        <PlugZap :size="14" />
+        连接数据源
+      </button>
+      <p class="data-hint source-support-hint">
+        当前支持 MySQL，PostgreSQL / SQL Server 即将支持。
+      </p>
+    </InspectorSection>
+
     <InspectorSection title="从 JSON 导入" :open="false">
       <p class="data-hint">
         粘贴一个 JSON 对象，嵌套字段会转换为点号路径，例如
@@ -108,5 +123,7 @@ function importJson() {
         设计画布显示占位符本身，点击顶部「矢量预览」即可看到使用示例数据替换后的效果。
       </p>
     </InspectorSection>
+
+    <DataSourceModal v-if="sourceOpen" @close="sourceOpen = false" />
   </div>
 </template>

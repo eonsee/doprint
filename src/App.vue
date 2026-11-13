@@ -83,6 +83,9 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
+  // Any other modal (e.g. the data source dialog) owns the keyboard while open.
+  if (document.querySelector('[data-modal]')) return
+
   // Direct cell editing owns the keyboard: arrows / Delete / typing belong to
   // the table overlay, not to canvas nudging or deletion.
   if (designer.tableEditing.value) {

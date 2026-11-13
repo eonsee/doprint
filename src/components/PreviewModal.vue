@@ -43,7 +43,7 @@ function downloadSvg() {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="preview-mask" @click.self="emit('close')">
+    <div v-if="open" class="preview-mask" data-modal @click.self="emit('close')">
       <div class="preview-dialog">
         <div class="preview-head">
           <div>

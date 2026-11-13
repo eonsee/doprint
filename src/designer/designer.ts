@@ -13,7 +13,9 @@ import { computed, reactive, ref } from 'vue'
 import type {
   DataField,
   ElementKind,
+  GuideOrientation,
   LayerItem,
+  PageGuide,
   PageTemplate,
   SelectionState,
   TableCell,
@@ -61,6 +63,8 @@ import { buildTableObject } from './tableFabric'
 import { createPdfFromImage, previewPixelRatio } from './pdf'
 
 const STORAGE_KEY = 'doprint.template.v1'
+const LIBRARY_KEY = 'doprint.templates.v1'
+const RULER_STORAGE_KEY = 'doprint.rulers.visible'
 const HISTORY_LIMIT = 50
 const SNAP_STEP = 1
 /** Default text size in scene millimetres (14px). */
@@ -83,6 +87,42 @@ let seq = 0
 function uid(): string {
   seq += 1
   return `el_${Date.now().toString(36)}_${seq.toString(36)}`
+}
+
+function guideId(): string {
+  seq += 1
+  return `guide_${Date.now().toString(36)}_${seq.toString(36)}`
+}
+
+function templateId(): string {
+  seq += 1
+  return `tpl_${Date.now().toString(36)}_${seq.toString(36)}`
+}
+
+/** A stored template as shown in the template switcher. */
+export interface TemplateSummary {
+  id: string
+  name: string
+  /** millimetres */
+  width: number
+  /** millimetres */
+  height: number
+  createdAt: number
+  updatedAt: number
+  active: boolean
+}
+
+interface StoredTemplate {
+  id: string
+  template: PageTemplate
+  createdAt: number
+  updatedAt: number
+}
+
+interface TemplateLibrary {
+  version: 1
+  activeId: string
+  items: StoredTemplate[]
 }
 
 export const KIND_LABEL: Record<ElementKind, string> = {
@@ -222,12 +262,62 @@ function sanitizeFilename(name: string): string {
   return (name || 'template').replace(/[\\/:*?"<>|]/g, '_').trim() || 'template'
 }
 
+function readRulersVisible(): boolean {
+  try {
+    const saved = localStorage.getItem(RULER_STORAGE_KEY)
+    return saved === null ? true : saved !== '0'
+  } catch {
+    return true
+  }
+}
+
+type MarginSide = 'top' | 'right' | 'bottom' | 'left'
+
+function readMargin(value: unknown, max: number): number {
+  const number = typeof value === 'number' && Number.isFinite(value) ? value : 0
+  return clamp(round(number, 1), 0, max)
+}
+
+function readGuides(value: unknown, width: number, height: number): PageGuide[] {
+  if (!Array.isArray(value)) return []
+  const guides: PageGuide[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const record = raw as Partial<PageGuide>
+    if (
+      record.orientation !== 'horizontal' &&
+      record.orientation !== 'vertical'
+    ) {
+      continue
+    }
+    const max = record.orientation === 'horizontal' ? height : width
+    const position =
+      typeof record.position === 'number' && Number.isFinite(record.position)
+        ? record.position
+        : 0
+    guides.push({
+      id: typeof record.id === 'string' && record.id ? record.id : guideId(),
+      orientation: record.orientation,
+      position: clamp(round(position, 1), 0, round(max, 1)),
+    })
+  }
+  return guides
+}
+
 export function createDesigner() {
   const ready = ref(false)
   const templateName = ref('未命名模板')
-  const page = reactive({ ...DEFAULT_PAGE })
+  const page = reactive({
+    ...DEFAULT_PAGE,
+    margin: { top: 0, right: 0, bottom: 0, left: 0 },
+    marginVisible: true,
+    guides: [] as PageGuide[],
+    guidesVisible: true,
+  })
   const grid = reactive({ size: 5, visible: true, snap: true })
   const view = reactive({ zoom: 3.2 })
+  const rulersVisible = ref(readRulersVisible())
+  const templates = ref<TemplateSummary[]>([])
   const selection = reactive<SelectionState>(emptySelection())
   const layers = ref<LayerItem[]>([])
   const objectCount = ref(0)
@@ -272,6 +362,8 @@ export function createDesigner() {
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let history: string[] = []
   let historyIndex = -1
+  let templateRecords: StoredTemplate[] = []
+  let activeTemplateId = ''
 
   const pagePreset = computed(() => {
     const preset = PAGE_PRESETS.find(
@@ -494,8 +586,94 @@ export function createDesigner() {
   function setPageSize(width: number, height: number) {
     page.width = clamp(round(width, 1), 20, 1000)
     page.height = clamp(round(height, 1), 20, 1000)
+    clampPageMargins()
+    clampPageGuides()
     fitToViewport()
     scheduleCommit()
+  }
+
+  function clampPageMargins() {
+    const maxX = round(page.width / 2, 1)
+    const maxY = round(page.height / 2, 1)
+    page.margin.left = clamp(round(page.margin.left, 1), 0, maxX)
+    page.margin.right = clamp(round(page.margin.right, 1), 0, maxX)
+    page.margin.top = clamp(round(page.margin.top, 1), 0, maxY)
+    page.margin.bottom = clamp(round(page.margin.bottom, 1), 0, maxY)
+  }
+
+  function setPageMargin(side: MarginSide, value: number) {
+    const horizontal = side === 'left' || side === 'right'
+    const max = round((horizontal ? page.width : page.height) / 2, 1)
+    const next = Number.isFinite(value) ? value : 0
+    page.margin[side] = clamp(round(next, 1), 0, max)
+    scheduleCommit()
+  }
+
+  function setPageMarginVisible(visible: boolean) {
+    page.marginVisible = visible
+    scheduleCommit()
+  }
+
+  function clampGuidePosition(
+    orientation: GuideOrientation,
+    position: number,
+  ): number {
+    const max = orientation === 'horizontal' ? page.height : page.width
+    const value = Number.isFinite(position) ? position : 0
+    return clamp(round(value, 1), 0, round(max, 1))
+  }
+
+  function clampPageGuides() {
+    for (const guide of page.guides) {
+      guide.position = clampGuidePosition(guide.orientation, guide.position)
+    }
+  }
+
+  function addGuide(orientation: GuideOrientation, position: number) {
+    page.guides.push({
+      id: guideId(),
+      orientation,
+      position: clampGuidePosition(orientation, position),
+    })
+    scheduleCommit()
+  }
+
+  /** Move a guide while dragging; call commitGuides() when the drag ends. */
+  function moveGuide(id: string, position: number) {
+    const guide = page.guides.find((item) => item.id === id)
+    if (!guide) return
+    guide.position = clampGuidePosition(guide.orientation, position)
+  }
+
+  function commitGuides() {
+    scheduleCommit()
+  }
+
+  function removeGuide(id: string) {
+    const index = page.guides.findIndex((item) => item.id === id)
+    if (index < 0) return
+    page.guides.splice(index, 1)
+    scheduleCommit()
+  }
+
+  function clearGuides() {
+    if (!page.guides.length) return
+    page.guides.splice(0, page.guides.length)
+    scheduleCommit()
+  }
+
+  function setGuidesVisible(visible: boolean) {
+    page.guidesVisible = visible
+    scheduleCommit()
+  }
+
+  function setRulersVisible(visible: boolean) {
+    rulersVisible.value = visible
+    try {
+      localStorage.setItem(RULER_STORAGE_KEY, visible ? '1' : '0')
+    } catch {
+      // Storage may be unavailable; the toggle still works for this session.
+    }
   }
 
   function setPreset(key: string) {
@@ -506,6 +684,15 @@ export function createDesigner() {
 
   function setTemplateName(name: string) {
     templateName.value = name
+    const record = templateRecords.find(
+      (item) => item.id === activeTemplateId,
+    )
+    if (record) {
+      record.template.name = name
+      record.updatedAt = Date.now()
+      refreshTemplates()
+      writeLibrary()
+    }
     scheduleCommit()
   }
 
@@ -1704,6 +1891,21 @@ export function createDesigner() {
     }
   }
 
+  function importDataFields(fields: DataField[]) {
+    const incoming = fields.filter((field) => field && field.key)
+    if (!incoming.length) return
+    const merged = new Map(dataFields.value.map((field) => [field.key, field]))
+    for (const field of incoming) {
+      merged.set(field.key, {
+        key: field.key,
+        value: String(field.value ?? ''),
+      })
+    }
+    dataFields.value = [...merged.values()]
+    scheduleCommit()
+    notify(`已导入 ${incoming.length} 个字段`)
+  }
+
   function readDataFields(input: unknown): DataField[] {
     if (!Array.isArray(input)) return []
     return input
@@ -1718,6 +1920,138 @@ export function createDesigner() {
 
   // ---------------------------------------------------------- persistence
 
+  function refreshTemplates() {
+    templates.value = [...templateRecords]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((record) => ({
+        id: record.id,
+        name: record.template.name || '未命名模板',
+        width: record.template.page?.width ?? DEFAULT_PAGE.width,
+        height: record.template.page?.height ?? DEFAULT_PAGE.height,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        active: record.id === activeTemplateId,
+      }))
+  }
+
+  function writeLibrary() {
+    try {
+      localStorage.setItem(
+        LIBRARY_KEY,
+        JSON.stringify({
+          version: 1,
+          activeId: activeTemplateId,
+          items: templateRecords,
+        }),
+      )
+    } catch {
+      // Storage may be full or disabled; autosave is best-effort.
+    }
+  }
+
+  function readLibrary(): TemplateLibrary | null {
+    try {
+      const raw = localStorage.getItem(LIBRARY_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as Partial<TemplateLibrary>
+      if (!parsed || !Array.isArray(parsed.items)) return null
+      const items: StoredTemplate[] = []
+      for (const rawItem of parsed.items) {
+        const item = rawItem as Partial<StoredTemplate>
+        if (!item || typeof item.id !== 'string' || !item.template) continue
+        if (!Array.isArray(item.template.elements)) continue
+        const now = Date.now()
+        items.push({
+          id: item.id,
+          template: item.template,
+          createdAt: typeof item.createdAt === 'number' ? item.createdAt : now,
+          updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : now,
+        })
+      }
+      if (!items.length) return null
+      return {
+        version: 1,
+        activeId:
+          typeof parsed.activeId === 'string' ? parsed.activeId : items[0].id,
+        items,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  function updateActiveRecord(template: PageTemplate) {
+    const now = Date.now()
+    const index = templateRecords.findIndex(
+      (record) => record.id === activeTemplateId,
+    )
+    if (index >= 0) {
+      templateRecords[index] = {
+        ...templateRecords[index],
+        template,
+        updatedAt: now,
+      }
+    } else {
+      if (!activeTemplateId) activeTemplateId = templateId()
+      templateRecords.push({
+        id: activeTemplateId,
+        template,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+    refreshTemplates()
+    writeLibrary()
+  }
+
+  function createBlankTemplate(name: string): PageTemplate {
+    return {
+      version: 1,
+      name,
+      page: {
+        width: DEFAULT_PAGE.width,
+        height: DEFAULT_PAGE.height,
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        marginVisible: true,
+        guides: [],
+        guidesVisible: true,
+      },
+      grid: { size: 5, visible: true, snap: true },
+      data: [],
+      elements: [],
+    }
+  }
+
+  function nextTemplateName(): string {
+    const names = new Set(
+      templateRecords.map((record) => record.template.name || '未命名模板'),
+    )
+    if (!names.has('未命名模板')) return '未命名模板'
+    let index = 2
+    while (names.has(`未命名模板 ${index}`)) index += 1
+    return `未命名模板 ${index}`
+  }
+
+  function pageSnapshot(): PageTemplate['page'] {
+    return {
+      width: round(page.width, 1),
+      height: round(page.height, 1),
+      margin: {
+        top: round(page.margin.top, 1),
+        right: round(page.margin.right, 1),
+        bottom: round(page.margin.bottom, 1),
+        left: round(page.margin.left, 1),
+      },
+      marginVisible: page.marginVisible,
+      guides: page.guides.map((guide) => ({
+        id: guide.id,
+        orientation: guide.orientation,
+        position: round(guide.position, 1),
+      })),
+      guidesVisible: page.guidesVisible,
+    }
+  }
+
   function toTemplateFromFabric(json: any): PageTemplate {
     const elements: TemplateElement[] = []
     for (const raw of json.objects ?? []) {
@@ -1727,7 +2061,7 @@ export function createDesigner() {
     return {
       version: 1,
       name: templateName.value,
-      page: { width: round(page.width, 1), height: round(page.height, 1) },
+      page: pageSnapshot(),
       grid: { size: grid.size, visible: grid.visible, snap: grid.snap },
       data: dataFields.value.map((field) => ({ ...field })),
       elements,
@@ -1820,7 +2154,7 @@ export function createDesigner() {
       return {
         version: 1,
         name: templateName.value,
-        page: { width: round(page.width, 1), height: round(page.height, 1) },
+        page: pageSnapshot(),
         grid: { size: grid.size, visible: grid.visible, snap: grid.snap },
         data: dataFields.value.map((field) => ({ ...field })),
         elements: [],
@@ -1869,31 +2203,71 @@ export function createDesigner() {
   function saveLocal(json: string) {
     try {
       localStorage.setItem(STORAGE_KEY, json)
+      try {
+        updateActiveRecord(JSON.parse(json) as PageTemplate)
+      } catch {
+        // Keep the single-template copy even if the library update fails.
+      }
       savedAt.value = Date.now()
     } catch {
       // storage might be full or disabled; autosave is best-effort
     }
   }
 
+  function resetHistory() {
+    cancelPendingCommit()
+    history = []
+    historyIndex = -1
+    canUndo.value = false
+    canRedo.value = false
+    commitNow()
+  }
+
   async function restore() {
-    let template: PageTemplate | null = null
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) template = JSON.parse(raw) as PageTemplate
-    } catch {
-      template = null
-    }
-    if (template && template.version === 1 && Array.isArray(template.elements)) {
-      await loadTemplate(template)
+    const library = readLibrary()
+    if (library) {
+      templateRecords = library.items
+      activeTemplateId = library.items.some(
+        (item) => item.id === library.activeId,
+      )
+        ? library.activeId
+        : library.items[0].id
     } else {
-      await loadTemplate({
-        version: 1,
-        name: '未命名模板',
-        page: { ...DEFAULT_PAGE },
-        grid: { size: 5, visible: true, snap: true },
-        elements: [],
-      })
+      let legacy: PageTemplate | null = null
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw) as PageTemplate
+          if (
+            parsed &&
+            parsed.version === 1 &&
+            Array.isArray(parsed.elements)
+          ) {
+            legacy = parsed
+          }
+        }
+      } catch {
+        legacy = null
+      }
+      const template = legacy ?? createBlankTemplate('未命名模板')
+      const now = Date.now()
+      activeTemplateId = templateId()
+      templateRecords = [
+        {
+          id: activeTemplateId,
+          template,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]
     }
+
+    const active =
+      templateRecords.find((record) => record.id === activeTemplateId) ??
+      templateRecords[0]
+    activeTemplateId = active.id
+    await loadTemplate(active.template)
+    refreshTemplates()
     commitNow()
     canUndo.value = false
     canRedo.value = false
@@ -2011,6 +2385,14 @@ export function createDesigner() {
       templateName.value = template.name || '未命名模板'
       page.width = clamp(template.page?.width ?? DEFAULT_PAGE.width, 20, 1000)
       page.height = clamp(template.page?.height ?? DEFAULT_PAGE.height, 20, 1000)
+      const margin = template.page?.margin
+      page.margin.top = readMargin(margin?.top, round(page.height / 2, 1))
+      page.margin.right = readMargin(margin?.right, round(page.width / 2, 1))
+      page.margin.bottom = readMargin(margin?.bottom, round(page.height / 2, 1))
+      page.margin.left = readMargin(margin?.left, round(page.width / 2, 1))
+      page.marginVisible = template.page?.marginVisible !== false
+      page.guides = readGuides(template.page?.guides, page.width, page.height)
+      page.guidesVisible = template.page?.guidesVisible !== false
       grid.size = template.grid?.size ?? 5
       grid.visible = template.grid?.visible ?? true
       grid.snap = template.grid?.snap ?? true
@@ -2078,6 +2460,34 @@ export function createDesigner() {
     }
   }
 
+  async function newTemplate() {
+    cancelPendingCommit()
+    commitNow()
+    const now = Date.now()
+    activeTemplateId = templateId()
+    const template = createBlankTemplate(nextTemplateName())
+    templateRecords.push({
+      id: activeTemplateId,
+      template,
+      createdAt: now,
+      updatedAt: now,
+    })
+    await loadTemplate(template)
+    resetHistory()
+    notify('已新建空白模板')
+  }
+
+  async function openTemplate(id: string) {
+    if (id === activeTemplateId) return
+    const record = templateRecords.find((item) => item.id === id)
+    if (!record) return
+    cancelPendingCommit()
+    commitNow()
+    activeTemplateId = id
+    await loadTemplate(record.template)
+    resetHistory()
+  }
+
   /**
    * Build a throwaway canvas from the template rather than the live canvas so
    * sample data can replace `{{field}}` placeholders in text and table cells.
@@ -2143,9 +2553,11 @@ export function createDesigner() {
     // state
     ready,
     templateName,
+    templates,
     page,
     grid,
     view,
+    rulersVisible,
     selection,
     layers,
     objectCount,
@@ -2180,8 +2592,17 @@ export function createDesigner() {
     resetZoom,
     // page
     setPageSize,
+    setPageMargin,
+    setPageMarginVisible,
+    setGuidesVisible,
+    addGuide,
+    moveGuide,
+    commitGuides,
+    removeGuide,
+    clearGuides,
     setPreset,
     setTemplateName,
+    setRulersVisible,
     setGridSize,
     setGridVisible,
     setGridSnap,
@@ -2217,6 +2638,7 @@ export function createDesigner() {
     updateDataField,
     removeDataField,
     importDataJson,
+    importDataFields,
     // editing
     updateSelected,
     applyGlobalTextStyle,
@@ -2236,6 +2658,8 @@ export function createDesigner() {
     serialize,
     downloadTemplate,
     importTemplate,
+    newTemplate,
+    openTemplate,
     generateSVG,
     generatePDF,
   }

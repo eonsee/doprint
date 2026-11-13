@@ -104,10 +104,45 @@ export interface TemplateElement {
   table?: TableConfig
 }
 
+export interface PageMargins {
+  /** millimetres */
+  top: number
+  /** millimetres */
+  right: number
+  /** millimetres */
+  bottom: number
+  /** millimetres */
+  left: number
+}
+
+export type GuideOrientation = 'horizontal' | 'vertical'
+
+/** A design guide dragged out from a ruler; never printed or exported. */
+export interface PageGuide {
+  id: string
+  orientation: GuideOrientation
+  /**
+   * Distance from the page's top edge for horizontal guides, or from the
+   * left edge for vertical guides, in millimetres.
+   */
+  position: number
+}
+
 export interface PageTemplate {
   version: 1
   name: string
-  page: { width: number; height: number }
+  page: {
+    width: number
+    height: number
+    /** margin guide, in millimetres */
+    margin?: PageMargins
+    /** whether the dashed margin guide is shown */
+    marginVisible?: boolean
+    /** ruler guides in millimetres */
+    guides?: PageGuide[]
+    /** whether the ruler guides are shown */
+    guidesVisible?: boolean
+  }
   grid: { size: number; visible: boolean; snap: boolean }
   /** sample data used for binding preview */
   data?: DataField[]

@@ -45,7 +45,14 @@ import {
 } from '../designer/units'
 
 const designer = useDesigner()
-const { selection, page, grid, pagePreset, dataFields } = designer
+const {
+  selection,
+  page,
+  grid,
+  pagePreset,
+  dataFields,
+  rulersVisible,
+} = designer
 
 const isMulti = computed(() => selection.count > 1)
 const fontSizePx = computed(() => round(selection.text.fontSize * PX_PER_MM, 1))
@@ -54,6 +61,12 @@ const opacityPercent = computed(() =>
 )
 const isLandscape = computed(() => page.width > page.height)
 const canDistribute = computed(() => selection.count >= 3)
+const contentWidth = computed(() =>
+  Math.max(0, round(page.width - page.margin.left - page.margin.right, 1)),
+)
+const contentHeight = computed(() =>
+  Math.max(0, round(page.height - page.margin.top - page.margin.bottom, 1)),
+)
 
 const strokeStyle = computed<'solid' | 'dashed' | 'dotted'>(() => {
   const dash = selection.style.strokeDash
@@ -150,6 +163,22 @@ function onPageHeight(value: number) {
   designer.setPageSize(page.width, value)
 }
 
+function onPageMargin(side: 'top' | 'right' | 'bottom' | 'left', value: number) {
+  designer.setPageMargin(side, value)
+}
+
+function onMarginVisible(event: Event) {
+  designer.setPageMarginVisible((event.target as HTMLInputElement).checked)
+}
+
+function onRulersVisible(event: Event) {
+  designer.setRulersVisible((event.target as HTMLInputElement).checked)
+}
+
+function onGuidesVisible(event: Event) {
+  designer.setGuidesVisible((event.target as HTMLInputElement).checked)
+}
+
 function onGridSize(event: Event) {
   designer.setGridSize(Number((event.target as HTMLSelectElement).value))
 }
@@ -233,9 +262,65 @@ function align(action: AlignAction) {
             </button>
           </div>
         </div>
+        <p class="field-note">
+          宽度和高度可自由输入（20–1000 mm），修改后即使用自定义纸张尺寸。
+        </p>
       </InspectorSection>
 
-      <InspectorSection title="网格与吸附">
+      <InspectorSection title="页边距">
+        <div class="field-grid">
+          <NumField
+            label="上"
+            :model-value="page.margin.top"
+            unit="mm"
+            :step="1"
+            :min="0"
+            :max="round(page.height / 2, 1)"
+            @update:model-value="onPageMargin('top', $event)"
+          />
+          <NumField
+            label="下"
+            :model-value="page.margin.bottom"
+            unit="mm"
+            :step="1"
+            :min="0"
+            :max="round(page.height / 2, 1)"
+            @update:model-value="onPageMargin('bottom', $event)"
+          />
+          <NumField
+            label="左"
+            :model-value="page.margin.left"
+            unit="mm"
+            :step="1"
+            :min="0"
+            :max="round(page.width / 2, 1)"
+            @update:model-value="onPageMargin('left', $event)"
+          />
+          <NumField
+            label="右"
+            :model-value="page.margin.right"
+            unit="mm"
+            :step="1"
+            :min="0"
+            :max="round(page.width / 2, 1)"
+            @update:model-value="onPageMargin('right', $event)"
+          />
+        </div>
+        <label class="switch-row">
+          <span>显示边距虚线框</span>
+          <input
+            class="switch"
+            type="checkbox"
+            :checked="page.marginVisible"
+            @change="onMarginVisible"
+          />
+        </label>
+        <p class="field-note">
+          内容区 {{ contentWidth }} × {{ contentHeight }} mm，虚线框只用于设计参考，不会打印。
+        </p>
+      </InspectorSection>
+
+      <InspectorSection title="视图与吸附">
         <label class="select-field compact">
           <span>网格间距</span>
           <select :value="grid.size" @change="onGridSize">
@@ -254,6 +339,28 @@ function align(action: AlignAction) {
           />
         </label>
         <label class="switch-row">
+          <span>显示刻度尺</span>
+          <input
+            class="switch"
+            type="checkbox"
+            :checked="rulersVisible"
+            @change="onRulersVisible"
+          />
+        </label>
+        <label class="switch-row">
+          <span>显示参考线</span>
+          <input
+            class="switch"
+            type="checkbox"
+            :checked="page.guidesVisible"
+            @change="onGuidesVisible"
+          />
+        </label>
+        <div v-if="page.guides.length" class="guide-actions">
+          <span>{{ page.guides.length }} 条参考线</span>
+          <button class="clear-btn" @click="designer.clearGuides()">清除全部</button>
+        </div>
+        <label class="switch-row">
           <span>拖动吸附到 1 mm</span>
           <input
             class="switch"
@@ -262,6 +369,9 @@ function align(action: AlignAction) {
             @change="onGridSnap"
           />
         </label>
+        <p class="field-note">
+          从上方或左侧刻度尺向页面内拖动可拉出参考线；拖动参考线可移动，拖回刻度尺或双击可删除。
+        </p>
       </InspectorSection>
 
       <InspectorSection title="使用提示" :open="false">
