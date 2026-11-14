@@ -10,7 +10,7 @@ import {
   StaticCanvas,
   Textbox,
 } from 'fabric'
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type {
   DataField,
   ElementKind,
@@ -23,6 +23,7 @@ import type {
   TableCell,
   TableConfig,
   TemplateElement,
+  UiVisibilityConfig,
   UpdatePatch,
 } from './types'
 import { emptySelection } from './types'
@@ -35,7 +36,11 @@ import {
   clamp,
   round,
 } from './units'
-import { parseDataJson, resolveTemplateBindings } from './binding'
+import {
+  parseDataJson,
+  resolveCheckboxBindings,
+  resolveTemplateBindings,
+} from './binding'
 import {
   buildRegions,
   cellAtPoint,
@@ -85,6 +90,7 @@ const CASE_TEMPLATE_ID = 'tpl_case_billing'
 const CASE_TEMPLATE_SEED_KEY = 'doprint.case-template.seeded.v1'
 const RULER_STORAGE_KEY = 'doprint.rulers.visible'
 const THEME_STORAGE_KEY = 'doprint.theme.v1'
+const UI_VISIBILITY_STORAGE_KEY = 'doprint.ui.visibility.v1'
 const HISTORY_LIMIT = 50
 const SNAP_STEP = 1
 /** Comfortable canvas scale used by "reset zoom" and the initial fit cap. */
@@ -349,6 +355,56 @@ function fitImage(
   return image
 }
 
+/** Box glyphs that can be replaced by a bound checkbox token. */
+const CHECKBOX_CHARS = new Set(['□', '☐', '▢', '❑', '☑', '☒'])
+
+/** Count box glyphs outside of existing `{{...}}` binding tokens. */
+function countCheckboxChars(text: string): number {
+  let count = 0
+  let depth = 0
+  for (const char of text) {
+    if (char === '{') {
+      depth += 1
+      continue
+    }
+    if (char === '}') {
+      depth = Math.max(0, depth - 1)
+      continue
+    }
+    if (depth === 0 && CHECKBOX_CHARS.has(char)) count += 1
+  }
+  return count
+}
+
+/** Replace the first N box glyphs with the supplied tokens, in order. */
+function replaceCheckboxChars(
+  text: string,
+  tokens: string[],
+): { text: string; count: number } {
+  let result = ''
+  let depth = 0
+  let index = 0
+  for (const char of text) {
+    if (char === '{') {
+      depth += 1
+      result += char
+      continue
+    }
+    if (char === '}') {
+      depth = Math.max(0, depth - 1)
+      result += char
+      continue
+    }
+    if (depth === 0 && CHECKBOX_CHARS.has(char) && index < tokens.length) {
+      result += tokens[index]
+      index += 1
+      continue
+    }
+    result += char
+  }
+  return { text: result, count: index }
+}
+
 function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -448,6 +504,93 @@ function applyTheme(theme: DesignerTheme) {
   document.documentElement.dataset.theme = theme
 }
 
+function defaultUiVisibility(): UiVisibilityConfig {
+  return {
+    tools: {
+      text: true,
+      table: true,
+      labels: true,
+      symbols: true,
+      rect: true,
+      ellipse: true,
+      line: true,
+      image: true,
+      qrcode: true,
+      barcode: true,
+    },
+    topbar: {
+      page: true,
+      background: true,
+      globalStyle: true,
+      margins: true,
+    },
+    inspectorTabs: {
+      props: true,
+      layers: true,
+      data: true,
+    },
+    inspectorSections: {
+      page: true,
+      margins: true,
+      background: true,
+      watermark: true,
+      view: true,
+    },
+    topbarMain: {
+      template: true,
+      history: true,
+      autosave: true,
+      preview: true,
+      io: true,
+    },
+    topbarSelection: {
+      font: true,
+      textStyle: true,
+      align: true,
+      geometry: true,
+      actions: true,
+    },
+    inspectorSelection: {
+      align: true,
+      textStyle: true,
+      position: true,
+      multiAdjust: true,
+      appearance: true,
+      code: true,
+      image: true,
+      text: true,
+      table: true,
+      arrange: true,
+    },
+  }
+}
+
+function readUiVisibility(): UiVisibilityConfig {
+  const defaults = defaultUiVisibility()
+  try {
+    const raw = localStorage.getItem(UI_VISIBILITY_STORAGE_KEY)
+    if (!raw) return defaults
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    for (const group of Object.keys(defaults) as Array<
+      keyof UiVisibilityConfig
+    >) {
+      const stored = parsed?.[group]
+      if (!stored || typeof stored !== 'object') continue
+      for (const key of Object.keys(
+        defaults[group] as Record<string, boolean>,
+      )) {
+        const next = (stored as Record<string, unknown>)[key]
+        if (typeof next === 'boolean') {
+          (defaults[group] as Record<string, boolean>)[key] = next
+        }
+      }
+    }
+  } catch {
+    // Ignore malformed preferences and fall back to everything visible.
+  }
+  return defaults
+}
+
 type MarginSide = 'top' | 'right' | 'bottom' | 'left'
 
 function readMargin(value: unknown, max: number): number {
@@ -523,6 +666,7 @@ export function createDesigner() {
   const rulersVisible = ref(readRulersVisible())
   const theme = ref<DesignerTheme>(readTheme())
   applyTheme(theme.value)
+  const uiVisibility = reactive<UiVisibilityConfig>(readUiVisibility())
   const templates = ref<TemplateSummary[]>([])
   const selection = reactive<SelectionState>(emptySelection())
   const layers = ref<LayerItem[]>([])
@@ -534,6 +678,8 @@ export function createDesigner() {
   const dataFields = ref<DataField[]>([])
   /** Rendered by the designer root so the dialog is not trapped in a panel's stacking context. */
   const dataSourceOpen = ref(false)
+  /** Special-character / bound-checkbox picker, rendered by the root. */
+  const symbolPickerOpen = ref(false)
   /** Editable copy of the selected table's configuration. */
   const table = ref<TableConfig | null>(null)
   const tableSelection = reactive<TableRange>({
@@ -544,6 +690,19 @@ export function createDesigner() {
   })
   /** Whether cells are currently being edited directly on the canvas. */
   const tableEditing = ref(false)
+  /** Text of the current target: the active text element or table cell. */
+  const selectedEditableContent = computed(() => {
+    if (tableEditing.value && table.value) {
+      return String(
+        table.value.cellData[tableSelection.row]?.[tableSelection.col]?.v ??
+          '',
+      )
+    }
+    return selection.isText ? selection.text.content : ''
+  })
+  const selectedCheckboxCount = computed(() =>
+    countCheckboxChars(selectedEditableContent.value),
+  )
   /** A request from the canvas double-click handler to open a cell editor. */
   const requestedCellEdit = ref<{
     row: number
@@ -1695,6 +1854,40 @@ export function createDesigner() {
     setTheme(theme.value === 'dark' ? 'light' : 'dark')
   }
 
+  function writeUiVisibility() {
+    try {
+      localStorage.setItem(
+        UI_VISIBILITY_STORAGE_KEY,
+        JSON.stringify(uiVisibility),
+      )
+    } catch {
+      // Preferences are best-effort and may be blocked by the host.
+    }
+  }
+
+  /**
+   * Toggle one UI visibility flag using a `group.key` path, e.g.
+   * `tools.table`, `topbar.margins` or `inspectorTabs.layers`.
+   */
+  function setUiVisible(path: string, visible: boolean) {
+    const [group, key] = path.split('.')
+    const target = (uiVisibility as Record<string, unknown>)[group]
+    if (!target || typeof target !== 'object') return
+    if (!(key in (target as Record<string, boolean>))) return
+    ;(target as Record<string, boolean>)[key] = !!visible
+    writeUiVisibility()
+  }
+
+  function resetUiVisibility() {
+    const defaults = defaultUiVisibility()
+    for (const group of Object.keys(defaults) as Array<
+      keyof UiVisibilityConfig
+    >) {
+      Object.assign(uiVisibility[group], defaults[group])
+    }
+    writeUiVisibility()
+  }
+
   function setPreset(key: string) {
     const preset = PAGE_PRESETS.find((p) => p.key === key)
     if (!preset || preset.key === 'custom') return
@@ -2101,11 +2294,11 @@ export function createDesigner() {
     scheduleCommit()
   }
 
-  function addText() {
+  function addTextWithContent(content: string) {
     if (!canvas) return
     const width = 60
     const pos = nextPosition(width, 14)
-    const text = new Textbox('双击编辑文本', {
+    const text = new Textbox(content, {
       ...pos,
       width,
       fontSize: DEFAULT_TEXT_SIZE,
@@ -2119,6 +2312,88 @@ export function createDesigner() {
     } as any)
     decorate(text, 'text')
     commitAdd(text)
+  }
+
+  function addText() {
+    addTextWithContent('双击编辑文本')
+  }
+
+  /**
+   * Insert a symbol (or a bound-checkbox token) into the current editing
+   * target: an editing text box at its caret, a selected table cell, or a new
+   * text element when nothing suitable is selected.
+   */
+  function insertTextSymbol(symbol: string) {
+    const value = String(symbol ?? '')
+    if (!canvas || !value) return
+    const active = canvas.getActiveObject() as any
+    if (active && isTextType(typeOf(active))) {
+      if (active.isEditing && typeof active.insertChars === 'function') {
+        active.insertChars(value)
+      } else {
+        active.set('text', `${active.text ?? ''}${value}`)
+      }
+      active.setCoords()
+      canvas.requestRenderAll()
+      refreshSelection()
+      refreshLayers()
+      scheduleCommit()
+      return
+    }
+    if (tableEditing.value && table.value) {
+      const row = tableSelection.row
+      const col = tableSelection.col
+      const current = String(table.value.cellData[row]?.[col]?.v ?? '')
+      updateSelectedCells({ text: current + value })
+      return
+    }
+    addTextWithContent(value)
+  }
+
+  /**
+   * Replace the box glyphs in the current text / table cell with checkbox
+   * tokens, one token per supplied field value. Returns how many boxes were
+   * bound. Existing `{{...}}` tokens are left untouched.
+   */
+  function bindCheckboxValues(
+    field: string,
+    values: string[],
+    checked = '☑',
+    unchecked = '□',
+    labels: string[] = [],
+  ): number {
+    const key = field.trim()
+    if (!key || !values.length) return 0
+    const checkedChar = checked.trim() || '☑'
+    const uncheckedChar = unchecked.trim() || '□'
+    const tokens = values.map((value, index) => {
+      const prefix = String(labels[index] ?? '').trim()
+      return `${prefix}{{#${key}=${String(value).trim()}|${checkedChar}|${uncheckedChar}}}`
+    })
+
+    if (tableEditing.value && table.value) {
+      const row = tableSelection.row
+      const col = tableSelection.col
+      const current = String(table.value.cellData[row]?.[col]?.v ?? '')
+      const result = replaceCheckboxChars(current, tokens)
+      if (result.count) updateSelectedCells({ text: result.text })
+      return result.count
+    }
+
+    const active = canvas?.getActiveObject() as any
+    if (active && isTextType(typeOf(active))) {
+      const result = replaceCheckboxChars(String(active.text ?? ''), tokens)
+      if (result.count) {
+        active.set('text', result.text)
+        active.setCoords()
+        canvas!.requestRenderAll()
+        refreshSelection()
+        refreshLayers()
+        scheduleCommit()
+      }
+      return result.count
+    }
+    return 0
   }
 
   function addRect() {
@@ -2175,6 +2450,69 @@ export function createDesigner() {
     commitAdd(line)
   }
 
+  /**
+   * Checkbox bindings are meant to be seen, so the design canvas resolves
+   * them against the sample data while leaving `{{field}}` tokens raw.
+   */
+  function displayTableText(text: string) {
+    return resolveCheckboxBindings(text, dataFields.value)
+  }
+
+  /**
+   * Rebuild tables that contain checkbox bindings so the design canvas shows
+   * the new checked / unchecked symbols after sample data changes.
+   */
+  function refreshCheckboxTables() {
+    if (!canvas) return
+    let changed = 0
+    for (const obj of [...canvas.getObjects()]) {
+      if (!isTableObject(obj)) continue
+      const config = tableConfigOf(obj)
+      if (!config) continue
+      const hasCheckbox = Object.values(config.cellData).some((row) =>
+        Object.values(row ?? {}).some(
+          (cell) => typeof cell.v === 'string' && cell.v.includes('{{#'),
+        ),
+      )
+      if (!hasCheckbox) continue
+
+      const anyObj = obj as any
+      const group = buildTableObject(config, displayTableText)
+      group.set({
+        left: anyObj.left ?? 0,
+        top: anyObj.top ?? 0,
+        angle: anyObj.angle ?? 0,
+        scaleX: anyObj.scaleX ?? 1,
+        scaleY: anyObj.scaleY ?? 1,
+        opacity: anyObj.opacity ?? 1,
+        visible: anyObj.visible !== false,
+        name: anyObj.name || KIND_LABEL.table,
+        elementId: anyObj.elementId || uid(),
+        locked: anyObj.locked === true,
+      } as any)
+      ;(group as any).customKind = 'table'
+      group.set(CONTROL_STYLE as any)
+      applyLock(group, anyObj.locked === true)
+      const index = canvas.getObjects().indexOf(obj)
+      canvas.remove(obj)
+      canvas.insertAt(Math.max(0, index), group)
+      group.setCoords()
+      changed += 1
+    }
+    if (!changed) return
+    canvas.requestRenderAll()
+    refreshSelection()
+    refreshLayers()
+  }
+
+  watch(
+    dataFields,
+    () => {
+      if (!restoring) refreshCheckboxTables()
+    },
+    { deep: true },
+  )
+
   function addTable(rows = 3, cols = 3) {
     if (!canvas) return
     const bounds = printableBounds()
@@ -2182,9 +2520,55 @@ export function createDesigner() {
     const width = Math.max(2, Math.min(120, available))
     const config = createTableConfig(rows, cols, width)
     const size = getTableSize(config)
-    const group = buildTableObject(config)
+    const group = buildTableObject(config, displayTableText)
     group.set(nextPosition(size.width, size.height) as any)
     decorate(group, 'table')
+    applyLock(group, false)
+    commitAdd(group)
+  }
+
+  /**
+   * Insert a multi-up label sheet: one table grid whose cells are the labels.
+   * Using the table model keeps every cell independently editable with the
+   * existing inline editor, while the whole sheet moves and scales as one
+   * element.
+   */
+  function addLabelGrid(rows = 5, cols = 3) {
+    if (!canvas) return
+    const bounds = printableBounds() ?? {
+      left: 0,
+      top: 0,
+      width: page.width,
+      height: page.height,
+    }
+    const labelWidth = Math.max(5, Math.min(45, bounds.width / cols))
+    const labelHeight = Math.max(4, Math.min(25, bounds.height / rows))
+    const width = labelWidth * cols
+    const height = labelHeight * rows
+
+    let config = createTableConfig(rows, cols, width, height)
+    // Labels are uniform cells, not a header + body table.
+    delete config.rowData[0].s
+    config.padding = 1.5
+
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const index = row * cols + col + 1
+        config = updateCells(
+          config,
+          { row, col, endRow: row, endCol: col },
+          {
+            text: `标签 ${String(index).padStart(2, '0')}`,
+            align: 'center',
+            valign: 'middle',
+          },
+        )
+      }
+    }
+
+    const group = buildTableObject(config, displayTableText)
+    group.set(nextPosition(width, height) as any)
+    decorate(group, 'table', '多联标签')
     applyLock(group, false)
     commitAdd(group)
   }
@@ -2703,7 +3087,7 @@ export function createDesigner() {
       const center = obj.getCenterPoint()
       const totalAngle = obj.getTotalAngle()
       const normalized = normalizeTableConfig(config)
-      const group = buildTableObject(normalized)
+      const group = buildTableObject(normalized, displayTableText)
       group.set({
         angle: totalAngle,
         scaleX: 1,
@@ -2784,7 +3168,7 @@ export function createDesigner() {
         if (fontSize !== undefined) delete style.fontSize
       }
       const next = normalizeTableConfig(config)
-      const group = buildTableObject(next)
+      const group = buildTableObject(next, displayTableText)
       const index = canvas.getObjects().indexOf(obj)
       group.set({
         left: anyObj.left ?? 0,
@@ -2889,7 +3273,7 @@ export function createDesigner() {
     const active = canvas.getActiveObject() as FabricObject | null
     if (!active || !isTableObject(active)) return
     const normalized = normalizeTableConfig(next)
-    const group = buildTableObject(normalized)
+    const group = buildTableObject(normalized, displayTableText)
     const old = active as any
     const preservedId = String(old.elementId || (group as any).elementId || '')
     const index = canvas.getObjects().indexOf(active)
@@ -3741,7 +4125,7 @@ export function createDesigner() {
 
     if (el.kind === 'table') {
       const config = normalizeTableConfig(el.table ?? createTableConfig())
-      const group = buildTableObject(config)
+      const group = buildTableObject(config, displayTableText)
       // Rotation is stored on the Fabric group; cell hit-testing and the range
       // overlay both transform through that angle.
       group.set({ ...common, scaleX: 1, scaleY: 1 } as any)
@@ -4055,6 +4439,7 @@ export function createDesigner() {
     zoomPercent,
     dataFields,
     dataSourceOpen,
+    symbolPickerOpen,
     table,
     tableSelection,
     tableEditing,
@@ -4101,15 +4486,24 @@ export function createDesigner() {
     theme,
     setTheme,
     toggleTheme,
+    uiVisibility,
+    setUiVisible,
+    resetUiVisibility,
     setGridSize,
     setGridVisible,
     setGridSnap,
     // creation
     addText,
+    addTextWithContent,
+    insertTextSymbol,
+    bindCheckboxValues,
+    selectedEditableContent,
+    selectedCheckboxCount,
     addRect,
     addEllipse,
     addLine,
     addTable,
+    addLabelGrid,
     addImageFile,
     addImageFromSrc,
     addQrCode,

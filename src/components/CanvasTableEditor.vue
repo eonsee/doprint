@@ -15,7 +15,6 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   Bold,
-  Check,
   Italic,
   Merge,
   PanelBottom,
@@ -343,11 +342,6 @@ function onToolbarPointerDown(event: MouseEvent) {
   if (editing.value) commitEditor()
 }
 
-function finishEditing() {
-  commitEditor()
-  designer.endTableEdit()
-}
-
 /**
  * A pointer down outside the table (canvas, panels, page) must save the open
  * cell first; clicking a non-focusable target does not reliably blur it.
@@ -545,10 +539,6 @@ onBeforeUnmount(() => {
       </button>
       <span class="cte-sep"></span>
       <span class="cte-range">{{ tableRangeLabel }} · {{ tableSelectionCount }}</span>
-      <button type="button" class="cte-btn done" title="退出表格编辑" @click="finishEditing">
-        <Check :size="14" />
-        <span>完成</span>
-      </button>
     </div>
   </div>
 </template>

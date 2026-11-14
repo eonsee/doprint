@@ -5,7 +5,6 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
-  Check,
   Italic,
   Merge,
   PanelBottom,
@@ -15,6 +14,7 @@ import {
   Pencil,
   Split,
   Underline,
+  X,
 } from 'lucide-vue-next'
 import BindingPicker from './ui/BindingPicker.vue'
 import ColorField from './ui/ColorField.vue'
@@ -311,9 +311,9 @@ function toggleCanvasEditing() {
         :class="{ active: tableEditing }"
         @click="toggleCanvasEditing"
       >
-        <Check v-if="tableEditing" :size="14" />
+        <X v-if="tableEditing" :size="14" />
         <Pencil v-else :size="14" />
-        {{ tableEditing ? '完成表格编辑' : '在画布上编辑表格' }}
+        {{ tableEditing ? '退出表格编辑' : '在画布上编辑表格' }}
       </button>
 
       <div class="table-actions">

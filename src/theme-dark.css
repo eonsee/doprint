@@ -407,6 +407,28 @@
   background: var(--panel);
 }
 
+[data-theme='dark'] .settings-row {
+  background: var(--surface-input);
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .settings-row:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+[data-theme='dark'] .symbol-btn {
+  background: var(--surface-input);
+  border-color: var(--border);
+  color: var(--text-soft);
+}
+
+[data-theme='dark'] .symbol-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
 /* table panel + inline cell editor */
 
 [data-theme='dark'] .table-grid-wrap {

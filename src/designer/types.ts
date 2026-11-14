@@ -117,6 +117,74 @@ export interface TableConfig {
   background: string
 }
 
+/** Tools that can be shown or hidden in the left rail. */
+export type UiToolKey =
+  | 'text'
+  | 'table'
+  | 'labels'
+  | 'symbols'
+  | 'rect'
+  | 'ellipse'
+  | 'line'
+  | 'image'
+  | 'qrcode'
+  | 'barcode'
+
+/**
+ * User-level UI visibility preferences. Hidden items are only removed from the
+ * interface; template data is untouched.
+ */
+export interface UiVisibilityConfig {
+  tools: Record<UiToolKey, boolean>
+  topbar: {
+    page: boolean
+    background: boolean
+    globalStyle: boolean
+    margins: boolean
+  }
+  inspectorTabs: {
+    props: boolean
+    layers: boolean
+    data: boolean
+  }
+  inspectorSections: {
+    page: boolean
+    margins: boolean
+    background: boolean
+    watermark: boolean
+    view: boolean
+  }
+  /** Main top bar actions (preview / import / export / template / history). */
+  topbarMain: {
+    template: boolean
+    history: boolean
+    autosave: boolean
+    preview: boolean
+    io: boolean
+  }
+  /** Quick groups shown in the top strip while an element is selected. */
+  topbarSelection: {
+    font: boolean
+    textStyle: boolean
+    align: boolean
+    geometry: boolean
+    actions: boolean
+  }
+  /** Property groups shown in the right panel while an element is selected. */
+  inspectorSelection: {
+    align: boolean
+    textStyle: boolean
+    position: boolean
+    multiAdjust: boolean
+    appearance: boolean
+    code: boolean
+    image: boolean
+    text: boolean
+    table: boolean
+    arrange: boolean
+  }
+}
+
 export interface DataField {
   key: string
   value: string

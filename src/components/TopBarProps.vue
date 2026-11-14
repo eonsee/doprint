@@ -44,13 +44,23 @@ const {
   globalTextStyle,
   page,
   pagePreset,
+  uiVisibility,
 } = designer
 
 const isMulti = computed(() => selection.count > 1)
 const isLandscape = computed(() => page.width > page.height)
-const backgroundOpacityPercent = computed(() =>
-  Math.round(page.backgroundOpacity * 100),
-)
+
+const topbarGroupOrder = ['page', 'background', 'globalStyle', 'margins'] as const
+type TopbarGroup = (typeof topbarGroupOrder)[number]
+
+/** Avoid a leading divider when the first visible group is not "page". */
+function showTopbarSep(group: TopbarGroup) {
+  const index = topbarGroupOrder.indexOf(group)
+  if (index <= 0) return false
+  return topbarGroupOrder
+    .slice(0, index)
+    .some((key) => uiVisibility.topbar[key])
+}
 const isTextSelected = computed(() => !isMulti.value && selection.isText)
 const isTableSelected = computed(() => !isMulti.value && selection.isTable)
 /** A multi-selection that contains text elements or tables. */
@@ -216,25 +226,6 @@ function onBackgroundVisible(event: Event) {
   )
 }
 
-function onBackgroundOpacity(event: Event) {
-  const value = readNumber(event)
-  if (value !== null) {
-    designer.setPageBackgroundOpacity(clamp(value, 0, 100) / 100)
-  }
-}
-
-function onBackgroundPrint(event: Event) {
-  designer.setPageBackgroundPrint((event.target as HTMLInputElement).checked)
-}
-
-function onWatermarkVisible(event: Event) {
-  designer.setWatermarkVisible((event.target as HTMLInputElement).checked)
-}
-
-function onWatermarkText(event: Event) {
-  designer.setWatermarkText((event.target as HTMLInputElement).value)
-}
-
 /* --------------------------------------------------------- selection mode */
 
 function update(patch: UpdatePatch) {
@@ -320,10 +311,11 @@ function alignObjects(action: AlignAction) {
   <div class="topbar-props">
     <!-- ------------------------------------------------ nothing selected -->
     <template v-if="selection.count === 0">
-      <span class="tbp-title">
-        <Settings2 :size="13" />
-        页面
-      </span>
+      <template v-if="uiVisibility.topbar.page">
+        <span class="tbp-title">
+          <Settings2 :size="13" />
+          页面
+        </span>
 
       <label class="tbp-select tbp-paper" title="纸张预设">
         <select :value="pagePreset" @change="onPreset">
@@ -379,84 +371,45 @@ function alignObjects(action: AlignAction) {
           横向
         </button>
       </div>
-
-      <span class="tbp-sep"></span>
-      <span class="tbp-title">底图</span>
-      <button
-        class="btn ghost tbp-apply"
-        title="导入扫描件或模板图片作为纸张底图"
-        @click="pickBackground"
-      >
-        <ImagePlus :size="13" />
-        {{ page.backgroundImage ? '更换' : '导入' }}
-      </button>
-      <template v-if="page.backgroundImage">
-        <label class="tbp-switch" title="在画布上显示纸张底图">
-          <input
-            class="switch"
-            type="checkbox"
-            :checked="page.backgroundVisible"
-            @change="onBackgroundVisible"
-          />
-          <span>显示</span>
-        </label>
-        <label class="tbp-num" title="底图不透明度">
-          <span>透明</span>
-          <input
-            type="number"
-            step="5"
-            min="0"
-            max="100"
-            :value="backgroundOpacityPercent"
-            @change="onBackgroundOpacity"
-          />
-          <em>%</em>
-        </label>
-        <label class="tbp-switch" title="SVG / PDF 输出时包含底图">
-          <input
-            class="switch"
-            type="checkbox"
-            :checked="page.backgroundPrint"
-            @change="onBackgroundPrint"
-          />
-          <span>随打印</span>
-        </label>
-        <button
-          class="icon-btn tiny"
-          title="移除纸张底图"
-          @click="designer.removePageBackground()"
-        >
-          <Trash2 :size="14" />
-        </button>
       </template>
 
-      <span class="tbp-sep"></span>
-      <span class="tbp-title">水印</span>
-      <label class="tbp-switch" title="显示 / 隐藏版权水印">
-        <input
-          class="switch"
-          type="checkbox"
-          :checked="page.watermarkVisible"
-          @change="onWatermarkVisible"
-        />
-        <span>显示</span>
-      </label>
-      <label class="tbp-select" title="水印文字">
-        <input
-          type="text"
-          maxlength="60"
-          placeholder="水印文字"
-          :disabled="!page.watermarkVisible"
-          :value="page.watermarkText"
-          @change="onWatermarkText"
-        />
-      </label>
+      <template v-if="uiVisibility.topbar.background">
+        <span v-if="showTopbarSep('background')" class="tbp-sep"></span>
+        <span class="tbp-title">底图</span>
+        <button
+          class="btn ghost tbp-apply"
+          title="导入扫描件或模板图片作为纸张底图"
+          @click="pickBackground"
+        >
+          <ImagePlus :size="13" />
+          {{ page.backgroundImage ? '更换' : '导入' }}
+        </button>
+        <template v-if="page.backgroundImage">
+          <label class="tbp-switch" title="在画布上显示纸张底图">
+            <input
+              class="switch"
+              type="checkbox"
+              :checked="page.backgroundVisible"
+              @change="onBackgroundVisible"
+            />
+            <span>显示</span>
+          </label>
+          <button
+            class="icon-btn tiny"
+            title="移除纸张底图"
+            @click="designer.removePageBackground()"
+          >
+            <Trash2 :size="14" />
+          </button>
+        </template>
+      </template>
 
-      <span class="tbp-sep"></span>
-      <span class="tbp-title" title="全局字体 / 字号">
-        <Globe :size="13" />
-        全局
-      </span>
+      <template v-if="uiVisibility.topbar.globalStyle">
+        <span v-if="showTopbarSep('globalStyle')" class="tbp-sep"></span>
+        <span class="tbp-title" title="全局字体 / 字号">
+          <Globe :size="13" />
+          全局
+        </span>
 
       <label class="tbp-select">
         <span>字体</span>
@@ -495,16 +448,18 @@ function alignObjects(action: AlignAction) {
         <span>应用到全部</span>
       </label>
 
-      <span class="tbp-hint" :title="applyToAll ? '修改字体 / 字号会实时应用到全部文本与表格' : '开启开关后，修改字体 / 字号会应用到全部文本与表格'">
-        {{
-          globalTextStyle.count
-            ? `${globalTextStyle.count} 个文本 / 表格`
-            : '暂无文本或表格'
-        }}
-      </span>
+        <span class="tbp-hint" :title="applyToAll ? '修改字体 / 字号会实时应用到全部文本与表格' : '开启开关后，修改字体 / 字号会应用到全部文本与表格'">
+          {{
+            globalTextStyle.count
+              ? `${globalTextStyle.count} 个文本 / 表格`
+              : '暂无文本或表格'
+          }}
+        </span>
+      </template>
 
-      <span class="tbp-sep"></span>
-      <span class="tbp-title">边距</span>
+      <template v-if="uiVisibility.topbar.margins">
+        <span v-if="showTopbarSep('margins')" class="tbp-sep"></span>
+        <span class="tbp-title">边距</span>
       <label class="tbp-num" title="上边距">
         <span>上</span>
         <input
@@ -535,17 +490,18 @@ function alignObjects(action: AlignAction) {
           @change="onPageMargin('left', $event)"
         />
       </label>
-      <label class="tbp-num" title="右边距">
-        <span>右</span>
-        <input
-          type="number"
-          step="1"
-          min="0"
-          :value="page.margin.right"
-          @change="onPageMargin('right', $event)"
-        />
-        <em>mm</em>
-      </label>
+        <label class="tbp-num" title="右边距">
+          <span>右</span>
+          <input
+            type="number"
+            step="1"
+            min="0"
+            :value="page.margin.right"
+            @change="onPageMargin('right', $event)"
+          />
+          <em>mm</em>
+        </label>
+      </template>
 
       <div class="topbar-spacer"></div>
       <span class="tbp-hint tbp-hint-end">
@@ -565,7 +521,7 @@ function alignObjects(action: AlignAction) {
     <template v-else>
       <span class="kind-chip">{{ selection.kindLabel }}</span>
 
-      <template v-if="showFontControls">
+      <template v-if="showFontControls && uiVisibility.topbarSelection.font">
         <label class="tbp-select">
           <span>字体</span>
           <select :value="fontFamily" @change="onFontFamily">
@@ -589,7 +545,10 @@ function alignObjects(action: AlignAction) {
         </label>
       </template>
 
-      <div v-if="showTextControls" class="segmented tbp-seg">
+      <div
+        v-if="showTextControls && uiVisibility.topbarSelection.textStyle"
+        class="segmented tbp-seg"
+      >
         <button
           title="加粗"
           :class="{ active: selection.text.fontWeight === 'bold' }"
@@ -613,7 +572,10 @@ function alignObjects(action: AlignAction) {
         </button>
       </div>
 
-      <div v-if="showTextControls" class="segmented tbp-seg">
+      <div
+        v-if="showTextControls && uiVisibility.topbarSelection.align"
+        class="segmented tbp-seg"
+      >
         <button
           title="左对齐"
           :class="{ active: (selection.text.textAlign || 'left') === 'left' }"
@@ -637,9 +599,17 @@ function alignObjects(action: AlignAction) {
         </button>
       </div>
 
-      <span class="tbp-sep"></span>
+      <span
+        v-if="
+          (!isMulti && uiVisibility.topbarSelection.geometry) ||
+          (isMulti && uiVisibility.topbarSelection.align)
+        "
+        class="tbp-sep"
+      ></span>
 
-      <template v-if="!isMulti">
+      <template
+        v-if="!isMulti && uiVisibility.topbarSelection.geometry"
+      >
         <label class="tbp-num" title="水平位置">
           <span>X</span>
           <input
@@ -707,7 +677,10 @@ function alignObjects(action: AlignAction) {
         </label>
       </template>
 
-      <div v-else class="segmented tbp-seg">
+      <div
+        v-else-if="isMulti && uiVisibility.topbarSelection.align"
+        class="segmented tbp-seg"
+      >
         <button title="左对齐" @click="alignObjects('left')">
           <AlignStartVertical :size="15" />
         </button>
@@ -730,29 +703,31 @@ function alignObjects(action: AlignAction) {
 
       <div class="topbar-spacer"></div>
 
-      <button
-        class="icon-btn tiny"
-        :class="{ active: selection.layout.locked }"
-        :title="selection.layout.locked ? '解锁元素' : '锁定元素'"
-        @click="designer.toggleLocked()"
-      >
-        <Lock v-if="selection.layout.locked" :size="15" />
-        <Unlock v-else :size="15" />
-      </button>
-      <button
-        class="icon-btn tiny"
-        title="复制 (Ctrl+D)"
-        @click="designer.duplicateSelected()"
-      >
-        <Copy :size="15" />
-      </button>
-      <button
-        class="icon-btn tiny tbp-danger"
-        title="删除 (Delete)"
-        @click="designer.deleteSelected()"
-      >
-        <Trash2 :size="15" />
-      </button>
+      <template v-if="uiVisibility.topbarSelection.actions">
+        <button
+          class="icon-btn tiny"
+          :class="{ active: selection.layout.locked }"
+          :title="selection.layout.locked ? '解锁元素' : '锁定元素'"
+          @click="designer.toggleLocked()"
+        >
+          <Lock v-if="selection.layout.locked" :size="15" />
+          <Unlock v-else :size="15" />
+        </button>
+        <button
+          class="icon-btn tiny"
+          title="复制 (Ctrl+D)"
+          @click="designer.duplicateSelected()"
+        >
+          <Copy :size="15" />
+        </button>
+        <button
+          class="icon-btn tiny tbp-danger"
+          title="删除 (Delete)"
+          @click="designer.deleteSelected()"
+        >
+          <Trash2 :size="15" />
+        </button>
+      </template>
     </template>
   </div>
 </template>

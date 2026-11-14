@@ -53,6 +53,7 @@ const {
   pagePreset,
   dataFields,
   rulersVisible,
+  uiVisibility,
 } = designer
 
 const isMulti = computed(() => selection.count > 1)
@@ -295,7 +296,10 @@ function align(action: AlignAction) {
   <div class="props-panel">
     <!-- ------------------------------------------------------------ page -->
     <template v-if="selection.count === 0">
-      <InspectorSection title="页面设置">
+      <InspectorSection
+        v-if="uiVisibility.inspectorSections.page"
+        title="页面设置"
+      >
         <label class="select-field">
           <span>预设尺寸</span>
           <select :value="pagePreset" @change="onPreset">
@@ -351,7 +355,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection title="页边距">
+      <InspectorSection
+        v-if="uiVisibility.inspectorSections.margins"
+        title="页边距"
+      >
         <div class="field-grid">
           <NumField
             label="上"
@@ -405,7 +412,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection title="纸张底图">
+      <InspectorSection
+        v-if="uiVisibility.inspectorSections.background"
+        title="纸张底图"
+      >
         <template v-if="page.backgroundImage">
           <div class="background-preview">
             <img :src="page.backgroundImage" alt="纸张底图预览" />
@@ -482,7 +492,10 @@ function align(action: AlignAction) {
         />
       </InspectorSection>
 
-      <InspectorSection title="版权水印">
+      <InspectorSection
+        v-if="uiVisibility.inspectorSections.watermark"
+        title="版权水印"
+      >
         <label class="switch-row">
           <span>显示版权水印</span>
           <input
@@ -507,7 +520,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection title="视图与吸附">
+      <InspectorSection
+        v-if="uiVisibility.inspectorSections.view"
+        title="视图与吸附"
+      >
         <label class="select-field compact">
           <span>网格间距</span>
           <select :value="grid.size" @change="onGridSize">
@@ -598,7 +614,10 @@ function align(action: AlignAction) {
         </p>
       </section>
 
-      <InspectorSection v-if="isMulti" title="对齐与分布">
+      <InspectorSection
+        v-if="isMulti && uiVisibility.inspectorSelection.align"
+        title="对齐与分布"
+      >
         <div class="align-grid">
           <button title="左对齐" @click="align('left')">
             <AlignStartVertical :size="16" />
@@ -638,7 +657,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection v-if="multiFontTargets" title="文字样式">
+      <InspectorSection
+        v-if="multiFontTargets && uiVisibility.inspectorSelection.textStyle"
+        title="文字样式"
+      >
         <label class="select-field">
           <span>字体</span>
           <select
@@ -718,7 +740,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection v-if="!isMulti" title="位置与尺寸">
+      <InspectorSection
+        v-if="!isMulti && uiVisibility.inspectorSelection.position"
+        title="位置与尺寸"
+      >
         <div class="field-grid">
           <NumField
             label="X"
@@ -807,7 +832,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection v-if="isMulti" title="批量调整">
+      <InspectorSection
+        v-if="isMulti && uiVisibility.inspectorSelection.multiAdjust"
+        title="批量调整"
+      >
         <ColorField
           label="填充 / 颜色"
           palette
@@ -826,7 +854,13 @@ function align(action: AlignAction) {
       </InspectorSection>
 
       <InspectorSection
-        v-if="!isMulti && !selection.isImage && !selection.isTable && !selection.isCode"
+        v-if="
+          !isMulti &&
+          !selection.isImage &&
+          !selection.isTable &&
+          !selection.isCode &&
+          uiVisibility.inspectorSelection.appearance
+        "
         title="外观"
       >
         <ColorField
@@ -899,7 +933,11 @@ function align(action: AlignAction) {
       </InspectorSection>
 
       <InspectorSection
-        v-if="!isMulti && selection.isCode"
+        v-if="
+          !isMulti &&
+          selection.isCode &&
+          uiVisibility.inspectorSelection.code
+        "
         :title="selection.kind === 'qrcode' ? '二维码内容' : '条形码内容'"
       >
         <textarea
@@ -917,7 +955,10 @@ function align(action: AlignAction) {
         </p>
       </InspectorSection>
 
-      <InspectorSection v-if="!isMulti && selection.isImage" title="图片">
+      <InspectorSection
+        v-if="!isMulti && selection.isImage && uiVisibility.inspectorSelection.image"
+        title="图片"
+      >
         <button class="btn ghost wide" @click="pickImage">
           <ImagePlus :size="15" />
           替换图片
@@ -931,9 +972,16 @@ function align(action: AlignAction) {
         />
       </InspectorSection>
 
-      <TablePanel v-if="!isMulti && selection.isTable" />
+      <TablePanel
+        v-if="
+          !isMulti && selection.isTable && uiVisibility.inspectorSelection.table
+        "
+      />
 
-      <InspectorSection v-if="!isMulti && selection.isText" title="文本">
+      <InspectorSection
+        v-if="!isMulti && selection.isText && uiVisibility.inspectorSelection.text"
+        title="文本"
+      >
         <textarea
           ref="textarea"
           class="text-content"
@@ -1048,7 +1096,10 @@ function align(action: AlignAction) {
         />
       </InspectorSection>
 
-      <InspectorSection title="图层与操作">
+      <InspectorSection
+        v-if="uiVisibility.inspectorSelection.arrange"
+        title="图层与操作"
+      >
         <div class="action-grid">
           <button class="btn ghost" @click="designer.duplicateSelected()">
             <Copy :size="14" />

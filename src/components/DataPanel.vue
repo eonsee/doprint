@@ -121,7 +121,8 @@ function importJson() {
         例如 <code v-pre>{{ 客户名称 }}</code> 或 <code v-pre>{{ order.no }}</code>。
       </p>
       <p class="data-hint">
-        设计画布显示占位符本身，点击顶部「矢量预览」即可看到使用示例数据替换后的效果。
+        文本和普通字段绑定在设计画布中保留占位符；表格单元格中的复选框绑定会直接显示勾选符号。
+        点击顶部「矢量预览」即可查看使用示例数据替换后的完整效果。
       </p>
     </InspectorSection>
   </div>

@@ -2,8 +2,10 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import DataSourceModal from './DataSourceModal.vue'
 import DesignerStage from './DesignerStage.vue'
+import GlobalSettingsModal from './GlobalSettingsModal.vue'
 import InspectorPanel from './InspectorPanel.vue'
 import PreviewModal from './PreviewModal.vue'
+import SpecialCharacterModal from './SpecialCharacterModal.vue'
 import ToolRail from './ToolRail.vue'
 import TopBar from './TopBar.vue'
 import { provideDesigner } from '../designer/context'
@@ -29,11 +31,13 @@ const designer = createDesigner()
 provideDesigner(designer)
 defineExpose({ designer })
 
-const { notice, dataSourceOpen } = designer
+const { notice, dataSourceOpen, symbolPickerOpen } = designer
 
 function closeDataSource() {
   dataSourceOpen.value = false
 }
+
+const settingsOpen = ref(false)
 
 type PreviewMode = 'vector' | 'pdf'
 
@@ -198,6 +202,7 @@ onBeforeUnmount(() => {
       :closable="props.closable"
       @preview="openPreview"
       @close="emit('close')"
+      @settings="settingsOpen = true"
     />
     <div class="app-body">
       <ToolRail />
@@ -214,6 +219,16 @@ onBeforeUnmount(() => {
     />
 
     <DataSourceModal v-if="dataSourceOpen" @close="closeDataSource" />
+
+    <GlobalSettingsModal
+      v-if="settingsOpen"
+      @close="settingsOpen = false"
+    />
+
+    <SpecialCharacterModal
+      v-if="symbolPickerOpen"
+      @close="symbolPickerOpen = false"
+    />
 
     <transition name="toast">
       <div v-if="notice" class="toast">{{ notice }}</div>

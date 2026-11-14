@@ -9,6 +9,7 @@ import {
   FileText,
   Moon,
   Redo2,
+  Settings2,
   Sun,
   Undo2,
   Upload,
@@ -30,10 +31,19 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'preview', mode: 'vector' | 'pdf'): void
   (e: 'close'): void
+  (e: 'settings'): void
 }>()
 
 const designer = useDesigner()
-const { templateName, templates, canUndo, canRedo, savedAt, theme } = designer
+const {
+  templateName,
+  templates,
+  canUndo,
+  canRedo,
+  savedAt,
+  theme,
+  uiVisibility,
+} = designer
 
 const fileInput = ref<HTMLInputElement>()
 const pickerEl = ref<HTMLDivElement>()
@@ -148,7 +158,11 @@ async function onFileChange(event: Event) {
 
       <div class="topbar-divider"></div>
 
-      <div ref="pickerEl" class="template-picker">
+      <div
+        v-if="uiVisibility.topbarMain.template"
+        ref="pickerEl"
+        class="template-picker"
+      >
         <input
           class="template-name"
           :value="templateName"
@@ -212,6 +226,7 @@ async function onFileChange(event: Event) {
 
       <div class="topbar-actions">
         <button
+          v-if="uiVisibility.topbarMain.history"
           class="icon-btn"
           title="撤销 (Ctrl+Z)"
           :disabled="!canUndo"
@@ -220,12 +235,20 @@ async function onFileChange(event: Event) {
           <Undo2 :size="17" />
         </button>
         <button
+          v-if="uiVisibility.topbarMain.history"
           class="icon-btn"
           title="重做 (Ctrl+Shift+Z)"
           :disabled="!canRedo"
           @click="designer.redo()"
         >
           <Redo2 :size="17" />
+        </button>
+        <button
+          class="icon-btn"
+          title="全局属性 · 自定义显示内容"
+          @click="emit('settings')"
+        >
+          <Settings2 :size="17" />
         </button>
         <button
           class="icon-btn theme-toggle"
@@ -239,9 +262,12 @@ async function onFileChange(event: Event) {
 
       <div class="topbar-spacer"></div>
 
-      <span class="autosave">{{ savedLabel }}</span>
+      <span v-if="uiVisibility.topbarMain.autosave" class="autosave">
+        {{ savedLabel }}
+      </span>
 
       <button
+        v-if="uiVisibility.topbarMain.preview"
         class="btn ghost"
         title="矢量预览（SVG，可缩放）"
         :disabled="previewLoading !== null"
@@ -252,6 +278,7 @@ async function onFileChange(event: Event) {
       </button>
 
       <button
+        v-if="uiVisibility.topbarMain.preview"
         class="btn ghost"
         title="PDF 预览（按打印尺寸生成）"
         :disabled="previewLoading !== null"
@@ -261,12 +288,20 @@ async function onFileChange(event: Event) {
         {{ previewLoading === 'pdf' ? '生成中…' : 'PDF 预览' }}
       </button>
 
-      <button class="btn ghost" @click="onImportClick">
+      <button
+        v-if="uiVisibility.topbarMain.io"
+        class="btn ghost"
+        @click="onImportClick"
+      >
         <Upload :size="15" />
         导入
       </button>
 
-      <button class="btn primary" @click="designer.downloadTemplate()">
+      <button
+        v-if="uiVisibility.topbarMain.io"
+        class="btn primary"
+        @click="designer.downloadTemplate()"
+      >
         <Download :size="15" />
         导出 JSON
       </button>

@@ -41,7 +41,10 @@ function solidRect(
  * of background, fills, border segments and text boxes. Selection and scaling
  * are handled by Fabric on the group, not by any HTML overlay.
  */
-export function buildTableObject(config: TableConfig): Group {
+export function buildTableObject(
+  config: TableConfig,
+  resolveText?: (text: string) => string,
+): Group {
   const width = getTableWidth(config)
   const height = getTableHeight(config)
   const colWidths = getColumnWidths(config)
@@ -162,7 +165,8 @@ export function buildTableObject(config: TableConfig): Group {
 
   // Cell text, positioned according to vertical alignment.
   for (const region of regions) {
-    const value = getCellValue(config, region.row, region.col)
+    const rawValue = getCellValue(config, region.row, region.col)
+    const value = resolveText ? resolveText(rawValue) : rawValue
     if (!value) continue
     const style = getCellStyle(config, region.row, region.col)
     const padding = Math.min(

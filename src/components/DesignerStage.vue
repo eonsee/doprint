@@ -214,6 +214,19 @@ function scheduleDraw() {
   drawFrame = requestAnimationFrame(drawRulers)
 }
 
+/**
+ * Clicking the grey workspace around the paper clears the selection, just
+ * like clicking an empty spot on the paper canvas.
+ */
+function onStagePointerDown(event: PointerEvent) {
+  const pageBox = pageEl.value
+  if (!pageBox) return
+  const target = event.target as Node | null
+  if (target && pageBox.contains(target)) return
+  if (designer.selection.count === 0) return
+  designer.clearSelection()
+}
+
 function onRulerWheel(event: WheelEvent) {
   const scroll = scrollEl.value
   if (!scroll) return
@@ -491,7 +504,11 @@ const pageStyle = computed(() => {
       @pointerdown="onRulerPointerDown('vertical', $event)"
     ></canvas>
 
-    <div ref="scrollEl" class="stage-scroll">
+    <div
+      ref="scrollEl"
+      class="stage-scroll"
+      @pointerdown="onStagePointerDown"
+    >
       <div class="stage-inner">
         <div ref="pageEl" class="stage-page" :style="pageStyle">
           <div
