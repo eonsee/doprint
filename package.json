@@ -1,6 +1,6 @@
 {
   "name": "doprint-designer",
-  "version": "0.1.0",
+  "version": "1.1.2",
   "description": "面向打印场景的可视化模板设计器（Vue 3 / Vue 2.7 组件库）",
   "license": "Apache-2.0",
   "type": "module",
