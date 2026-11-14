@@ -7,7 +7,8 @@ import type { GuideOrientation, PageGuide } from '../designer/types'
 import { clamp, round } from '../designer/units'
 
 const designer = useDesigner()
-const { page, grid, view, objectCount, zoomPercent, rulersVisible } = designer
+const { page, grid, view, objectCount, zoomPercent, rulersVisible, theme } =
+  designer
 
 const canvasEl = ref<HTMLCanvasElement>()
 const scrollEl = ref<HTMLDivElement>()
@@ -30,6 +31,32 @@ const movingGuideInside = ref(true)
 const NICE_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
 const RULER_FONT = '9px "Segoe UI", system-ui, -apple-system, sans-serif'
 
+interface RulerPalette {
+  background: string
+  band: string
+  tick: string
+  label: string
+  border: string
+}
+
+/** Rulers are painted on <canvas>, so they cannot inherit CSS variables. */
+const RULER_PALETTES: Record<'light' | 'dark', RulerPalette> = {
+  light: {
+    background: '#f8fafc',
+    band: '#eef2f7',
+    tick: '#a9b4c4',
+    label: '#68758a',
+    border: '#dfe5ee',
+  },
+  dark: {
+    background: '#141a24',
+    band: '#1b2431',
+    tick: '#45536a',
+    label: '#8592a6',
+    border: '#26303f',
+  },
+}
+
 function pickStep(zoom: number, minPx: number) {
   return (
     NICE_STEPS.find((step) => step * zoom >= minPx) ??
@@ -47,6 +74,7 @@ function drawRuler(
   originPx: number,
   pageLengthPx: number,
   pageLengthMm: number,
+  palette: RulerPalette,
 ) {
   if (!canvas) return
   const width = canvas.clientWidth
@@ -70,14 +98,14 @@ function drawRuler(
   const along = horizontal ? width : height
   const across = horizontal ? height : width
 
-  ctx.fillStyle = '#f8fafc'
+  ctx.fillStyle = palette.background
   ctx.fillRect(0, 0, width, height)
 
   // Soft band marking the page extent.
   const bandStart = Math.max(0, Math.min(along, originPx))
   const bandEnd = Math.max(0, Math.min(along, originPx + pageLengthPx))
   if (bandEnd > bandStart) {
-    ctx.fillStyle = '#eef2f7'
+    ctx.fillStyle = palette.band
     if (horizontal) ctx.fillRect(bandStart, 0, bandEnd - bandStart, height)
     else ctx.fillRect(0, bandStart, width, bandEnd - bandStart)
   }
@@ -88,7 +116,7 @@ function drawRuler(
   const visibleStart = Math.max(0, -originPx / zoom)
   const visibleEnd = Math.min(pageLengthMm, (along - originPx) / zoom)
 
-  ctx.strokeStyle = '#a9b4c4'
+  ctx.strokeStyle = palette.tick
   ctx.lineWidth = 1
   ctx.beginPath()
   for (
@@ -111,7 +139,7 @@ function drawRuler(
   ctx.stroke()
 
   ctx.font = RULER_FONT
-  ctx.fillStyle = '#68758a'
+  ctx.fillStyle = palette.label
   for (
     let index = Math.ceil(visibleStart / labelStep);
     index * labelStep <= visibleEnd + 1e-6;
@@ -140,7 +168,7 @@ function drawRuler(
   }
 
   // Divider between the ruler and the scrollable canvas viewport.
-  ctx.strokeStyle = '#dfe5ee'
+  ctx.strokeStyle = palette.border
   ctx.beginPath()
   if (horizontal) {
     ctx.moveTo(0, across - 0.5)
@@ -162,12 +190,14 @@ function drawRulers() {
 
   const scrollRect = scroll.getBoundingClientRect()
   const pageRect = pageBox.getBoundingClientRect()
+  const palette = RULER_PALETTES[theme.value] ?? RULER_PALETTES.light
   drawRuler(
     top,
     'x',
     pageRect.left - scrollRect.left,
     pageRect.width,
     page.width,
+    palette,
   )
   drawRuler(
     left,
@@ -175,6 +205,7 @@ function drawRulers() {
     pageRect.top - scrollRect.top,
     pageRect.height,
     page.height,
+    palette,
   )
 }
 
@@ -390,6 +421,7 @@ watch(
 )
 
 watch(rulersVisible, () => scheduleDraw(), { flush: 'post' })
+watch(theme, () => scheduleDraw(), { flush: 'post' })
 
 const marginGuideStyle = computed(() => {
   if (!page.marginVisible) return null
@@ -400,6 +432,25 @@ const marginGuideStyle = computed(() => {
     top: `${top * view.zoom}px`,
     width: `${Math.max(0, page.width - left - right) * view.zoom}px`,
     height: `${Math.max(0, page.height - top - bottom) * view.zoom}px`,
+  }
+})
+
+/**
+ * Imported sheet underlay. Rendered as a plain DOM layer under the Fabric
+ * canvas so it never takes part in selection, hit testing or serialization.
+ */
+const backgroundStyle = computed(() => {
+  if (!page.backgroundImage || !page.backgroundVisible) return null
+  const size =
+    page.backgroundFit === 'contain'
+      ? 'contain'
+      : page.backgroundFit === 'stretch'
+        ? '100% 100%'
+        : 'cover'
+  return {
+    backgroundImage: `url("${page.backgroundImage}")`,
+    backgroundSize: size,
+    opacity: String(page.backgroundOpacity),
   }
 })
 
@@ -443,6 +494,12 @@ const pageStyle = computed(() => {
     <div ref="scrollEl" class="stage-scroll">
       <div class="stage-inner">
         <div ref="pageEl" class="stage-page" :style="pageStyle">
+          <div
+            v-if="backgroundStyle"
+            class="page-background"
+            :style="backgroundStyle"
+            aria-hidden="true"
+          ></div>
           <canvas ref="canvasEl"></canvas>
           <div
             v-if="marginGuideStyle"
@@ -490,7 +547,7 @@ const pageStyle = computed(() => {
       </div>
     </div>
 
-    <div v-if="objectCount === 0" class="empty-hint">
+    <div v-if="objectCount === 0 && !page.backgroundImage" class="empty-hint">
       <div class="empty-card">
         <strong>空白画布</strong>
         <span>从左侧工具栏添加文本、形状或图片开始设计</span>

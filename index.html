@@ -8,6 +8,18 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='23' font-family='Arial' font-size='19' font-weight='700' text-anchor='middle' fill='white'%3ED%3C/text%3E%3C/svg%3E"
     />
     <title>DoPrint · 打印模板设计器</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a light flash.
+      ;(() => {
+        try {
+          const saved = localStorage.getItem('doprint.theme.v1')
+          const dark = saved
+            ? saved === 'dark'
+            : window.matchMedia('(prefers-color-scheme: dark)').matches
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        } catch (e) {}
+      })()
+    </script>
     <!-- 百度统计 -->
     <script>
       var _hmt = _hmt || [];

@@ -9,8 +9,20 @@ import TopBar from './TopBar.vue'
 import { provideDesigner } from '../designer/context'
 import { createDesigner, type Designer } from '../designer/designer'
 
+const props = withDefaults(
+  defineProps<{
+    /**
+     * Show a close button in the top bar. The component does not hide itself;
+     * the host hides / unmounts it in response to the `close` event.
+     */
+    closable?: boolean
+  }>(),
+  { closable: false },
+)
+
 const emit = defineEmits<{
   (e: 'ready', designer: Designer): void
+  (e: 'close'): void
 }>()
 
 const designer = createDesigner()
@@ -181,7 +193,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-shell doprint-designer">
-    <TopBar :preview-loading="previewLoadingMode" @preview="openPreview" />
+    <TopBar
+      :preview-loading="previewLoadingMode"
+      :closable="props.closable"
+      @preview="openPreview"
+      @close="emit('close')"
+    />
     <div class="app-body">
       <ToolRail />
       <DesignerStage />

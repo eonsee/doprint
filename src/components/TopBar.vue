@@ -7,24 +7,33 @@ import {
   Eye,
   FilePlus2,
   FileText,
+  Moon,
   Redo2,
+  Sun,
   Undo2,
   Upload,
+  X,
 } from 'lucide-vue-next'
 import TopBarProps from './TopBarProps.vue'
 import { useDesigner } from '../designer/context'
 import type { TemplateSummary } from '../designer/designer'
 
-defineProps<{
-  previewLoading: 'vector' | 'pdf' | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    previewLoading: 'vector' | 'pdf' | null
+    /** Show the close button so the host can dismiss the designer. */
+    closable?: boolean
+  }>(),
+  { closable: false },
+)
 
 const emit = defineEmits<{
   (e: 'preview', mode: 'vector' | 'pdf'): void
+  (e: 'close'): void
 }>()
 
 const designer = useDesigner()
-const { templateName, templates, canUndo, canRedo, savedAt } = designer
+const { templateName, templates, canUndo, canRedo, savedAt, theme } = designer
 
 const fileInput = ref<HTMLInputElement>()
 const pickerEl = ref<HTMLDivElement>()
@@ -218,6 +227,14 @@ async function onFileChange(event: Event) {
         >
           <Redo2 :size="17" />
         </button>
+        <button
+          class="icon-btn theme-toggle"
+          :title="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
+          @click="designer.toggleTheme()"
+        >
+          <Sun v-if="theme === 'dark'" :size="17" />
+          <Moon v-else :size="17" />
+        </button>
       </div>
 
       <div class="topbar-spacer"></div>
@@ -252,6 +269,15 @@ async function onFileChange(event: Event) {
       <button class="btn primary" @click="designer.downloadTemplate()">
         <Download :size="15" />
         导出 JSON
+      </button>
+
+      <button
+        v-if="props.closable"
+        class="icon-btn topbar-close"
+        title="关闭设计器"
+        @click="emit('close')"
+      >
+        <X :size="17" />
       </button>
 
       <input

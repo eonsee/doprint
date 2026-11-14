@@ -179,6 +179,9 @@ export interface PageMargins {
 
 export type GuideOrientation = 'horizontal' | 'vertical'
 
+/** How the imported sheet underlay is fitted to the page. */
+export type PageBackgroundFit = 'cover' | 'contain' | 'stretch'
+
 /** A design guide dragged out from a ruler; never printed or exported. */
 export interface PageGuide {
   id: string
@@ -207,6 +210,19 @@ export interface PageTemplate {
     /** repeated copyright watermark across the page */
     watermarkVisible?: boolean
     watermarkText?: string
+    /**
+     * Imported template / scanned sheet image (data URL) drawn underneath all
+     * elements as a design reference.
+     */
+    backgroundImage?: string
+    /** whether the underlay is shown while designing */
+    backgroundVisible?: boolean
+    /** underlay opacity, 0–1 */
+    backgroundOpacity?: number
+    /** how the underlay is fitted to the page */
+    backgroundFit?: PageBackgroundFit
+    /** whether the underlay is included in SVG / PDF output */
+    backgroundPrint?: boolean
   }
   grid: { size: number; visible: boolean; snap: boolean }
   /** sample data used for binding preview */

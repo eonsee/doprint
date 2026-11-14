@@ -16,6 +16,7 @@ import type {
   ElementKind,
   GuideOrientation,
   LayerItem,
+  PageBackgroundFit,
   PageGuide,
   PageTemplate,
   SelectionState,
@@ -83,8 +84,11 @@ const CASE_TEMPLATE_ID = 'tpl_case_billing'
 /** Marks that the bundled case template has been offered on this browser. */
 const CASE_TEMPLATE_SEED_KEY = 'doprint.case-template.seeded.v1'
 const RULER_STORAGE_KEY = 'doprint.rulers.visible'
+const THEME_STORAGE_KEY = 'doprint.theme.v1'
 const HISTORY_LIMIT = 50
 const SNAP_STEP = 1
+/** Comfortable canvas scale used by "reset zoom" and the initial fit cap. */
+const DEFAULT_ZOOM_SCALE = 1.2
 /** Default text size in scene millimetres (14px). */
 const DEFAULT_TEXT_SIZE = DEFAULT_FONT_PX * PX_TO_MM
 const DEFAULT_TEXT_FILL = '#111827'
@@ -96,6 +100,15 @@ const DEFAULT_WATERMARK_TEXT = 'Doprint预览版'
 const WATERMARK_COLOR = '#64748b'
 const WATERMARK_OPACITY = 0.1
 const WATERMARK_ANGLE = -30
+/**
+ * Sheet underlay images are stored inline in the template (and therefore in
+ * localStorage), so overweight files are downscaled on import. The limit is
+ * the data-URL character count, not the decoded byte size.
+ */
+const BACKGROUND_MAX_DATA_URL = 1_200_000
+const BACKGROUND_MAX_DIMENSION = 2400
+const DEFAULT_BACKGROUND_OPACITY = 1
+const DEFAULT_BACKGROUND_FIT: PageBackgroundFit = 'cover'
 
 // Make our element metadata survive cloning / serialization.
 FabricObject.customProperties = [
@@ -345,6 +358,44 @@ function fileToDataURL(file: File): Promise<string> {
   })
 }
 
+function loadHtmlImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('图片加载失败'))
+    image.src = src
+  })
+}
+
+/**
+ * Read an underlay image and downscale it when necessary: the data URL is
+ * persisted inside the template, so a multi-megabyte scan would otherwise
+ * exhaust the localStorage quota and slow down every history snapshot.
+ */
+async function prepareBackgroundImage(file: File): Promise<string> {
+  const dataUrl = await fileToDataURL(file)
+  if (dataUrl.length <= BACKGROUND_MAX_DATA_URL) return dataUrl
+  const image = await loadHtmlImage(dataUrl)
+  const naturalWidth = image.naturalWidth || image.width || 1
+  const naturalHeight = image.naturalHeight || image.height || 1
+  const scale = Math.min(
+    1,
+    BACKGROUND_MAX_DIMENSION / Math.max(naturalWidth, naturalHeight),
+  )
+  const width = Math.max(1, Math.round(naturalWidth * scale))
+  const height = Math.max(1, Math.round(naturalHeight * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) return dataUrl
+  // Scans are usually opaque; flatten onto white so JPEG has no black edges.
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, width, height)
+  context.drawImage(image, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', 0.86)
+}
+
 function download(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime })
   const url = URL.createObjectURL(blob)
@@ -370,11 +421,58 @@ function readRulersVisible(): boolean {
   }
 }
 
+export type DesignerTheme = 'light' | 'dark'
+
+function readTheme(): DesignerTheme {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY)
+    if (saved === 'dark' || saved === 'light') return saved
+  } catch {
+    // Storage may be disabled; fall back to the system preference.
+  }
+  try {
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    ) {
+      return 'dark'
+    }
+  } catch {
+    // matchMedia is unavailable in some embedded browsers.
+  }
+  return 'light'
+}
+
+function applyTheme(theme: DesignerTheme) {
+  if (typeof document === 'undefined') return
+  document.documentElement.dataset.theme = theme
+}
+
 type MarginSide = 'top' | 'right' | 'bottom' | 'left'
 
 function readMargin(value: unknown, max: number): number {
   const number = typeof value === 'number' && Number.isFinite(value) ? value : 0
   return clamp(round(number, 1), 0, max)
+}
+
+function readBackgroundOpacity(value: unknown): number {
+  const number =
+    typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : DEFAULT_BACKGROUND_OPACITY
+  return clamp(round(number, 2), 0, 1)
+}
+
+function readBackgroundFit(value: unknown): PageBackgroundFit {
+  return value === 'cover' || value === 'contain' || value === 'stretch'
+    ? value
+    : DEFAULT_BACKGROUND_FIT
+}
+
+function readBackgroundImage(value: unknown): string {
+  return typeof value === 'string' && value.startsWith('data:image/')
+    ? value
+    : ''
 }
 
 function readGuides(value: unknown, width: number, height: number): PageGuide[] {
@@ -414,10 +512,17 @@ export function createDesigner() {
     guidesVisible: true,
     watermarkVisible: true,
     watermarkText: DEFAULT_WATERMARK_TEXT,
+    backgroundImage: '',
+    backgroundVisible: true,
+    backgroundOpacity: DEFAULT_BACKGROUND_OPACITY,
+    backgroundFit: DEFAULT_BACKGROUND_FIT,
+    backgroundPrint: false,
   })
   const grid = reactive({ size: 5, visible: true, snap: true })
   const view = reactive({ zoom: 3.2 })
   const rulersVisible = ref(readRulersVisible())
+  const theme = ref<DesignerTheme>(readTheme())
+  applyTheme(theme.value)
   const templates = ref<TemplateSummary[]>([])
   const selection = reactive<SelectionState>(emptySelection())
   const layers = ref<LayerItem[]>([])
@@ -1012,12 +1117,13 @@ export function createDesigner() {
     if (!viewportWidth || !viewportHeight) return
     const padding = 56
     const physical = PX_PER_MM * displayScale()
+    const comfortable = physical * DEFAULT_ZOOM_SCALE
     const z = Math.min(
       (viewportWidth - padding * 2) / page.width,
       (viewportHeight - padding * 2) / page.height,
-      physical,
+      comfortable,
     )
-    view.zoom = clamp(round(z, 3), 0.3, physical)
+    view.zoom = clamp(round(z, 3), 0.3, comfortable)
   }
 
   function setZoom(zoom: number) {
@@ -1034,7 +1140,7 @@ export function createDesigner() {
   }
 
   function resetZoom() {
-    setZoom(PX_PER_MM * displayScale())
+    setZoom(PX_PER_MM * displayScale() * DEFAULT_ZOOM_SCALE)
   }
 
   function setPageSize(width: number, height: number) {
@@ -1414,6 +1520,105 @@ export function createDesigner() {
     scheduleCommit()
   }
 
+  // --------------------------------------------------------- sheet underlay
+
+  async function setPageBackgroundFile(file: File) {
+    if (!file.type.startsWith('image/')) {
+      notify('请选择图片文件')
+      return
+    }
+    try {
+      const dataUrl = await prepareBackgroundImage(file)
+      page.backgroundImage = dataUrl
+      page.backgroundVisible = true
+      scheduleCommit()
+      notify('已导入纸张底图')
+    } catch (err) {
+      console.warn(err)
+      notify('底图加载失败')
+    }
+  }
+
+  function setPageBackgroundVisible(visible: boolean) {
+    page.backgroundVisible = !!visible
+    scheduleCommit()
+  }
+
+  function setPageBackgroundOpacity(opacity: number) {
+    page.backgroundOpacity = clamp(round(Number(opacity) || 0, 2), 0, 1)
+    scheduleCommit()
+  }
+
+  function setPageBackgroundFit(fit: PageBackgroundFit) {
+    page.backgroundFit = readBackgroundFit(fit)
+    scheduleCommit()
+  }
+
+  function setPageBackgroundPrint(enabled: boolean) {
+    page.backgroundPrint = !!enabled
+    scheduleCommit()
+  }
+
+  function removePageBackground() {
+    if (!page.backgroundImage) return
+    page.backgroundImage = ''
+    page.backgroundPrint = false
+    scheduleCommit()
+    notify('已移除纸张底图')
+  }
+
+  /** Frame the underlay inside the page for the selected fit mode. */
+  function backgroundFrame(naturalWidth: number, naturalHeight: number) {
+    const width = Math.max(1, naturalWidth)
+    const height = Math.max(1, naturalHeight)
+    if (page.backgroundFit === 'stretch') {
+      return { left: 0, top: 0, width: page.width, height: page.height }
+    }
+    const ratio =
+      page.backgroundFit === 'contain'
+        ? Math.min(page.width / width, page.height / height)
+        : Math.max(page.width / width, page.height / height)
+    const drawWidth = width * ratio
+    const drawHeight = height * ratio
+    return {
+      left: (page.width - drawWidth) / 2,
+      top: (page.height - drawHeight) / 2,
+      width: drawWidth,
+      height: drawHeight,
+    }
+  }
+
+  /** Underlay copy for the preview canvas; null unless it should be printed. */
+  async function backgroundObject(): Promise<FabricObject | null> {
+    if (
+      !page.backgroundImage ||
+      !page.backgroundVisible ||
+      !page.backgroundPrint
+    ) {
+      return null
+    }
+    try {
+      const image = await FabricImage.fromURL(page.backgroundImage)
+      const frame = backgroundFrame(image.width || 1, image.height || 1)
+      image.set({
+        left: frame.left,
+        top: frame.top,
+        originX: 'left',
+        originY: 'top',
+        scaleX: frame.width / Math.max(1, image.width || 1),
+        scaleY: frame.height / Math.max(1, image.height || 1),
+        opacity: page.backgroundOpacity,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+      } as any)
+      return image
+    } catch (err) {
+      console.warn('background image failed to load', err)
+      return null
+    }
+  }
+
   function clampGuidePosition(
     orientation: GuideOrientation,
     position: number,
@@ -1474,6 +1679,20 @@ export function createDesigner() {
     } catch {
       // Storage may be unavailable; the toggle still works for this session.
     }
+  }
+
+  function setTheme(value: DesignerTheme) {
+    theme.value = value === 'dark' ? 'dark' : 'light'
+    applyTheme(theme.value)
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme.value)
+    } catch {
+      // Storage may be unavailable; the toggle still works for this session.
+    }
+  }
+
+  function toggleTheme() {
+    setTheme(theme.value === 'dark' ? 'light' : 'dark')
   }
 
   function setPreset(key: string) {
@@ -3238,6 +3457,11 @@ export function createDesigner() {
       guidesVisible: page.guidesVisible,
       watermarkVisible: page.watermarkVisible,
       watermarkText: page.watermarkText,
+      backgroundImage: page.backgroundImage,
+      backgroundVisible: page.backgroundVisible,
+      backgroundOpacity: round(page.backgroundOpacity, 2),
+      backgroundFit: page.backgroundFit,
+      backgroundPrint: page.backgroundPrint,
     }
   }
 
@@ -3615,7 +3839,10 @@ export function createDesigner() {
     return Promise.resolve(finish(obj))
   }
 
-  async function loadTemplate(template: PageTemplate) {
+  async function loadTemplate(
+    template: PageTemplate,
+    options: { keepView?: boolean } = {},
+  ) {
     if (!canvas) return
     const token = ++loadToken
     restoring = true
@@ -3639,6 +3866,13 @@ export function createDesigner() {
         template.page.watermarkText.trim()
           ? template.page.watermarkText
           : DEFAULT_WATERMARK_TEXT
+      page.backgroundImage = readBackgroundImage(template.page?.backgroundImage)
+      page.backgroundVisible = template.page?.backgroundVisible !== false
+      page.backgroundOpacity = readBackgroundOpacity(
+        template.page?.backgroundOpacity,
+      )
+      page.backgroundFit = readBackgroundFit(template.page?.backgroundFit)
+      page.backgroundPrint = template.page?.backgroundPrint === true
       grid.size = template.grid?.size ?? 5
       grid.visible = template.grid?.visible ?? true
       grid.snap = template.grid?.snap ?? true
@@ -3655,7 +3889,9 @@ export function createDesigner() {
       objectCount.value = valid.length
       refreshSelection()
       refreshLayers()
-      fitToViewport()
+      // Undo / redo restore the document, not the viewport: refitting here
+      // made the canvas jump back to 100% (or "fit") on every history step.
+      if (!options.keepView) fitToViewport()
     } finally {
       if (token === loadToken) restoring = false
     }
@@ -3664,7 +3900,7 @@ export function createDesigner() {
   async function applyHistory() {
     const snapshot = history[historyIndex]
     if (!snapshot) return
-    await loadTemplate(JSON.parse(snapshot) as PageTemplate)
+    await loadTemplate(JSON.parse(snapshot) as PageTemplate, { keepView: true })
     canUndo.value = historyIndex > 0
     canRedo.value = historyIndex < history.length - 1
     saveLocal(snapshot)
@@ -3748,6 +3984,8 @@ export function createDesigner() {
       height: page.height,
       enableRetinaScaling: false,
     })
+    const background = await backgroundObject()
+    if (background) temp.add(background)
     const valid = objects.filter(Boolean) as FabricObject[]
     if (valid.length) temp.add(...valid)
     const watermark = watermarkObjects()
@@ -3845,6 +4083,12 @@ export function createDesigner() {
     setPageMarginVisible,
     setWatermarkVisible,
     setWatermarkText,
+    setPageBackgroundFile,
+    setPageBackgroundVisible,
+    setPageBackgroundOpacity,
+    setPageBackgroundFit,
+    setPageBackgroundPrint,
+    removePageBackground,
     setGuidesVisible,
     addGuide,
     moveGuide,
@@ -3854,6 +4098,9 @@ export function createDesigner() {
     setPreset,
     setTemplateName,
     setRulersVisible,
+    theme,
+    setTheme,
+    toggleTheme,
     setGridSize,
     setGridVisible,
     setGridSnap,

@@ -34,7 +34,7 @@ import NumField from './ui/NumField.vue'
 import SliderField from './ui/SliderField.vue'
 import { useDesigner } from '../designer/context'
 import type { AlignAction } from '../designer/designer'
-import type { UpdatePatch } from '../designer/types'
+import type { PageBackgroundFit, UpdatePatch } from '../designer/types'
 import {
   FONT_OPTIONS,
   GRID_SIZES,
@@ -76,6 +76,9 @@ const contentWidth = computed(() =>
 const contentHeight = computed(() =>
   Math.max(0, round(page.height - page.margin.top - page.margin.bottom, 1)),
 )
+const backgroundOpacityPercent = computed(() =>
+  Math.round(page.backgroundOpacity * 100),
+)
 
 const strokeStyle = computed<'solid' | 'dashed' | 'dotted'>(() => {
   const dash = selection.style.strokeDash
@@ -84,6 +87,7 @@ const strokeStyle = computed<'solid' | 'dashed' | 'dotted'>(() => {
 })
 
 const imageInput = ref<HTMLInputElement>()
+const backgroundInput = ref<HTMLInputElement>()
 const textarea = ref<HTMLTextAreaElement>()
 const codeTextarea = ref<HTMLTextAreaElement>()
 
@@ -199,6 +203,37 @@ function onWatermarkVisible(event: Event) {
 
 function onWatermarkText(event: Event) {
   designer.setWatermarkText((event.target as HTMLInputElement).value)
+}
+
+function pickBackground() {
+  backgroundInput.value?.click()
+}
+
+async function onBackgroundFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) await designer.setPageBackgroundFile(file)
+  input.value = ''
+}
+
+function onBackgroundVisible(event: Event) {
+  designer.setPageBackgroundVisible(
+    (event.target as HTMLInputElement).checked,
+  )
+}
+
+function onBackgroundOpacity(value: number) {
+  designer.setPageBackgroundOpacity(clamp(value, 0, 100) / 100)
+}
+
+function onBackgroundFit(event: Event) {
+  designer.setPageBackgroundFit(
+    (event.target as HTMLSelectElement).value as PageBackgroundFit,
+  )
+}
+
+function onBackgroundPrint(event: Event) {
+  designer.setPageBackgroundPrint((event.target as HTMLInputElement).checked)
 }
 
 function onCodeContent(event: Event) {
@@ -368,6 +403,83 @@ function align(action: AlignAction) {
           内容区 {{ contentWidth }} × {{ contentHeight }} mm，虚线框只用于设计参考，不会打印。
           设置边距后，元素的移动、缩放、新建和键盘微调都会被限制在内容区内。
         </p>
+      </InspectorSection>
+
+      <InspectorSection title="纸张底图">
+        <template v-if="page.backgroundImage">
+          <div class="background-preview">
+            <img :src="page.backgroundImage" alt="纸张底图预览" />
+          </div>
+          <div class="background-actions">
+            <button class="btn ghost" @click="pickBackground">
+              <ImagePlus :size="15" />
+              更换
+            </button>
+            <button
+              class="btn ghost danger-ghost"
+              @click="designer.removePageBackground()"
+            >
+              <Trash2 :size="15" />
+              移除
+            </button>
+          </div>
+          <label class="switch-row">
+            <span>显示底图</span>
+            <input
+              class="switch"
+              type="checkbox"
+              :checked="page.backgroundVisible"
+              @change="onBackgroundVisible"
+            />
+          </label>
+          <SliderField
+            label="不透明度"
+            unit="%"
+            :min="0"
+            :max="100"
+            :step="1"
+            :model-value="backgroundOpacityPercent"
+            @update:model-value="onBackgroundOpacity"
+          />
+          <label class="select-field compact">
+            <span>填充方式</span>
+            <select :value="page.backgroundFit" @change="onBackgroundFit">
+              <option value="cover">铺满纸张（等比裁剪）</option>
+              <option value="contain">适应纸张（完整显示）</option>
+              <option value="stretch">拉伸铺满</option>
+            </select>
+          </label>
+          <label class="switch-row">
+            <span>随模板打印</span>
+            <input
+              class="switch"
+              type="checkbox"
+              :checked="page.backgroundPrint"
+              @change="onBackgroundPrint"
+            />
+          </label>
+          <p class="field-note">
+            底图固定在纸张最底层，位于所有元素下方，不会遮挡选中和拖拽。
+            默认只在编辑器中显示；开启「随模板打印」后会一起进入 SVG / PDF 输出。
+          </p>
+        </template>
+        <template v-else>
+          <button class="btn ghost wide" @click="pickBackground">
+            <ImagePlus :size="15" />
+            导入纸张底图
+          </button>
+          <p class="field-note">
+            可导入扫描件或已有模板图片作为纸张底图，在底图上对齐文字、表格和条码，
+            便于复刻现成的纸质单据。
+          </p>
+        </template>
+        <input
+          ref="backgroundInput"
+          class="visually-hidden"
+          type="file"
+          accept="image/*"
+          @change="onBackgroundFile"
+        />
       </InspectorSection>
 
       <InspectorSection title="版权水印">

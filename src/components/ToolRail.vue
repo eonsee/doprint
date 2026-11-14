@@ -35,6 +35,10 @@ async function onFileChange(event: Event) {
       <Type :size="20" />
       <span>文本</span>
     </button>
+    <button class="tool" title="添加表格" @click="designer.addTable()">
+      <Table :size="20" />
+      <span>表格</span>
+    </button>
     <button class="tool" title="添加矩形" @click="designer.addRect()">
       <Square :size="20" />
       <span>矩形</span>
@@ -46,10 +50,6 @@ async function onFileChange(event: Event) {
     <button class="tool" title="添加线条" @click="designer.addLine()">
       <Minus :size="20" />
       <span>线条</span>
-    </button>
-    <button class="tool" title="添加表格" @click="designer.addTable()">
-      <Table :size="20" />
-      <span>表格</span>
     </button>
     <button class="tool" title="添加图片" @click="pickImage">
       <ImagePlus :size="20" />

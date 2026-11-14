@@ -11,11 +11,12 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   Bold,
-  Check,
   Copy,
   Globe,
+  ImagePlus,
   Italic,
   Lock,
+  Settings2,
   Trash2,
   Underline,
   Unlock,
@@ -27,6 +28,7 @@ import type { UpdatePatch } from '../designer/types'
 import {
   DEFAULT_FONT_PX,
   FONT_OPTIONS,
+  PAGE_PRESETS,
   PX_PER_MM,
   PX_TO_MM,
   clamp,
@@ -35,9 +37,20 @@ import {
 } from '../designer/units'
 
 const designer = useDesigner()
-const { selection, table, tableSelection, globalTextStyle } = designer
+const {
+  selection,
+  table,
+  tableSelection,
+  globalTextStyle,
+  page,
+  pagePreset,
+} = designer
 
 const isMulti = computed(() => selection.count > 1)
+const isLandscape = computed(() => page.width > page.height)
+const backgroundOpacityPercent = computed(() =>
+  Math.round(page.backgroundOpacity * 100),
+)
 const isTextSelected = computed(() => !isMulti.value && selection.isText)
 const isTableSelected = computed(() => !isMulti.value && selection.isTable)
 /** A multi-selection that contains text elements or tables. */
@@ -95,6 +108,8 @@ const selectionSizeOptions = computed(() => fontSizeOptions(fontSizePx.value))
 const globalFont = ref(FONT_OPTIONS[0]?.value ?? 'SimSun')
 const globalSizePx = ref(DEFAULT_FONT_PX)
 const globalSizeOptions = computed(() => fontSizeOptions(globalSizePx.value))
+/** When on, font / size changes are pushed to every text and table at once. */
+const applyToAll = ref(false)
 let noticeTimer: number | undefined
 
 watch(
@@ -106,18 +121,32 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => globalTextStyle.value.count,
+  (count) => {
+    if (!count) applyToAll.value = false
+  },
+)
+
 onBeforeUnmount(() => {
   if (noticeTimer) window.clearTimeout(noticeTimer)
 })
 
 function onGlobalFont(event: Event) {
   globalFont.value = (event.target as HTMLSelectElement).value
+  if (applyToAll.value) applyGlobalStyle()
 }
 
 function onGlobalSize(event: Event) {
   const value = Number((event.target as HTMLSelectElement).value)
   if (!Number.isFinite(value)) return
   globalSizePx.value = clamp(value, 4, 300)
+  if (applyToAll.value) applyGlobalStyle()
+}
+
+function onApplyToAll(event: Event) {
+  applyToAll.value = (event.target as HTMLInputElement).checked
+  if (applyToAll.value) applyGlobalStyle()
 }
 
 function fontLabel(value: string) {
@@ -136,6 +165,74 @@ function applyGlobalStyle() {
   noticeTimer = window.setTimeout(() => {
     if (designer.notice.value === message) designer.notice.value = ''
   }, 2400)
+}
+
+/* ------------------------------------------------------ page-level props */
+
+const backgroundInput = ref<HTMLInputElement>()
+
+function onPreset(event: Event) {
+  designer.setPreset((event.target as HTMLSelectElement).value)
+}
+
+function onPageWidth(event: Event) {
+  const value = readNumber(event)
+  if (value !== null) designer.setPageSize(value, page.height)
+}
+
+function onPageHeight(event: Event) {
+  const value = readNumber(event)
+  if (value !== null) designer.setPageSize(page.width, value)
+}
+
+function setOrientation(orientation: 'portrait' | 'landscape') {
+  const wantLandscape = orientation === 'landscape'
+  if (wantLandscape === isLandscape.value) return
+  designer.setPageSize(page.height, page.width)
+}
+
+function onPageMargin(
+  side: 'top' | 'right' | 'bottom' | 'left',
+  event: Event,
+) {
+  const value = readNumber(event)
+  if (value !== null) designer.setPageMargin(side, value)
+}
+
+function pickBackground() {
+  backgroundInput.value?.click()
+}
+
+async function onBackgroundFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) await designer.setPageBackgroundFile(file)
+  input.value = ''
+}
+
+function onBackgroundVisible(event: Event) {
+  designer.setPageBackgroundVisible(
+    (event.target as HTMLInputElement).checked,
+  )
+}
+
+function onBackgroundOpacity(event: Event) {
+  const value = readNumber(event)
+  if (value !== null) {
+    designer.setPageBackgroundOpacity(clamp(value, 0, 100) / 100)
+  }
+}
+
+function onBackgroundPrint(event: Event) {
+  designer.setPageBackgroundPrint((event.target as HTMLInputElement).checked)
+}
+
+function onWatermarkVisible(event: Event) {
+  designer.setWatermarkVisible((event.target as HTMLInputElement).checked)
+}
+
+function onWatermarkText(event: Event) {
+  designer.setWatermarkText((event.target as HTMLInputElement).value)
 }
 
 /* --------------------------------------------------------- selection mode */
@@ -224,8 +321,141 @@ function alignObjects(action: AlignAction) {
     <!-- ------------------------------------------------ nothing selected -->
     <template v-if="selection.count === 0">
       <span class="tbp-title">
+        <Settings2 :size="13" />
+        页面
+      </span>
+
+      <label class="tbp-select tbp-paper" title="纸张预设">
+        <select :value="pagePreset" @change="onPreset">
+          <option
+            v-for="preset in PAGE_PRESETS"
+            :key="preset.key"
+            :value="preset.key"
+            :disabled="preset.key === 'custom'"
+          >
+            {{ preset.label }}
+          </option>
+        </select>
+      </label>
+
+      <label class="tbp-num" title="页面宽度">
+        <span>W</span>
+        <input
+          type="number"
+          step="1"
+          min="20"
+          max="1000"
+          :value="page.width"
+          @change="onPageWidth"
+        />
+        <em>mm</em>
+      </label>
+      <label class="tbp-num" title="页面高度">
+        <span>H</span>
+        <input
+          type="number"
+          step="1"
+          min="20"
+          max="1000"
+          :value="page.height"
+          @change="onPageHeight"
+        />
+        <em>mm</em>
+      </label>
+
+      <div class="segmented text-seg tbp-seg">
+        <button
+          title="纵向纸张"
+          :class="{ active: !isLandscape }"
+          @click="setOrientation('portrait')"
+        >
+          纵向
+        </button>
+        <button
+          title="横向纸张"
+          :class="{ active: isLandscape }"
+          @click="setOrientation('landscape')"
+        >
+          横向
+        </button>
+      </div>
+
+      <span class="tbp-sep"></span>
+      <span class="tbp-title">底图</span>
+      <button
+        class="btn ghost tbp-apply"
+        title="导入扫描件或模板图片作为纸张底图"
+        @click="pickBackground"
+      >
+        <ImagePlus :size="13" />
+        {{ page.backgroundImage ? '更换' : '导入' }}
+      </button>
+      <template v-if="page.backgroundImage">
+        <label class="tbp-switch" title="在画布上显示纸张底图">
+          <input
+            class="switch"
+            type="checkbox"
+            :checked="page.backgroundVisible"
+            @change="onBackgroundVisible"
+          />
+          <span>显示</span>
+        </label>
+        <label class="tbp-num" title="底图不透明度">
+          <span>透明</span>
+          <input
+            type="number"
+            step="5"
+            min="0"
+            max="100"
+            :value="backgroundOpacityPercent"
+            @change="onBackgroundOpacity"
+          />
+          <em>%</em>
+        </label>
+        <label class="tbp-switch" title="SVG / PDF 输出时包含底图">
+          <input
+            class="switch"
+            type="checkbox"
+            :checked="page.backgroundPrint"
+            @change="onBackgroundPrint"
+          />
+          <span>随打印</span>
+        </label>
+        <button
+          class="icon-btn tiny"
+          title="移除纸张底图"
+          @click="designer.removePageBackground()"
+        >
+          <Trash2 :size="14" />
+        </button>
+      </template>
+
+      <span class="tbp-sep"></span>
+      <span class="tbp-title">水印</span>
+      <label class="tbp-switch" title="显示 / 隐藏版权水印">
+        <input
+          class="switch"
+          type="checkbox"
+          :checked="page.watermarkVisible"
+          @change="onWatermarkVisible"
+        />
+        <span>显示</span>
+      </label>
+      <label class="tbp-select" title="水印文字">
+        <input
+          type="text"
+          maxlength="60"
+          placeholder="水印文字"
+          :disabled="!page.watermarkVisible"
+          :value="page.watermarkText"
+          @change="onWatermarkText"
+        />
+      </label>
+
+      <span class="tbp-sep"></span>
+      <span class="tbp-title" title="全局字体 / 字号">
         <Globe :size="13" />
-        全局样式
+        全局
       </span>
 
       <label class="tbp-select">
@@ -250,28 +480,85 @@ function alignObjects(action: AlignAction) {
         </select>
       </label>
 
-      <button
-        class="btn ghost tbp-apply"
-        title="把当前字体和字号应用到所有文本与表格"
-        :disabled="!globalTextStyle.count"
-        @click="applyGlobalStyle"
+      <label
+        class="tbp-switch"
+        :class="{ disabled: !globalTextStyle.count }"
+        title="开启后，修改字体或字号会立即应用到全部文本与表格"
       >
-        <Check :size="13" />
-        应用到全部
-      </button>
+        <input
+          class="switch"
+          type="checkbox"
+          :checked="applyToAll"
+          :disabled="!globalTextStyle.count"
+          @change="onApplyToAll"
+        />
+        <span>应用到全部</span>
+      </label>
 
-      <span class="tbp-hint">
+      <span class="tbp-hint" :title="applyToAll ? '修改字体 / 字号会实时应用到全部文本与表格' : '开启开关后，修改字体 / 字号会应用到全部文本与表格'">
         {{
           globalTextStyle.count
-            ? `将同时修改 ${globalTextStyle.count} 个文本 / 表格`
-            : '模板中暂无文本或表格'
+            ? `${globalTextStyle.count} 个文本 / 表格`
+            : '暂无文本或表格'
         }}
       </span>
+
+      <span class="tbp-sep"></span>
+      <span class="tbp-title">边距</span>
+      <label class="tbp-num" title="上边距">
+        <span>上</span>
+        <input
+          type="number"
+          step="1"
+          min="0"
+          :value="page.margin.top"
+          @change="onPageMargin('top', $event)"
+        />
+      </label>
+      <label class="tbp-num" title="下边距">
+        <span>下</span>
+        <input
+          type="number"
+          step="1"
+          min="0"
+          :value="page.margin.bottom"
+          @change="onPageMargin('bottom', $event)"
+        />
+      </label>
+      <label class="tbp-num" title="左边距">
+        <span>左</span>
+        <input
+          type="number"
+          step="1"
+          min="0"
+          :value="page.margin.left"
+          @change="onPageMargin('left', $event)"
+        />
+      </label>
+      <label class="tbp-num" title="右边距">
+        <span>右</span>
+        <input
+          type="number"
+          step="1"
+          min="0"
+          :value="page.margin.right"
+          @change="onPageMargin('right', $event)"
+        />
+        <em>mm</em>
+      </label>
 
       <div class="topbar-spacer"></div>
       <span class="tbp-hint tbp-hint-end">
         选中元素后，这里会显示字体、大小与位置等快捷属性
       </span>
+
+      <input
+        ref="backgroundInput"
+        class="visually-hidden"
+        type="file"
+        accept="image/*"
+        @change="onBackgroundFile"
+      />
     </template>
 
     <!-- ---------------------------------------------------- has selection -->
