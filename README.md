@@ -1,6 +1,8 @@
 # DoPrint 设计器
 
-面向打印场景的可视化模板设计器（Vue 3 / Vue 2.7 组件库），支持文本、图形、图片、专业表格、二维码 / 条形码、数据绑定、毫米刻度尺、参考线、多模板管理，以及 SVG / PDF 预览与导出。
+一款轻量化面向打印场景的可视化模板设计器，秉承极致的设计方案、告别复杂的设计模式、拥有流畅的设计体验和简单容易的集成效果。
+
+（Vue 3 / Vue 2.7 组件库），支持文本、图形、图片、专业表格、二维码 / 条形码、数据绑定、毫米刻度尺、参考线、多模板管理，以及 SVG / PDF 预览与导出。
 
 [官网](https://doprint.top) · [在线体验](https://doprint.fios.top) · [GitHub](https://github.com/eonsee/doprint) · [Gitee](https://gitee.com/mayekun/doprint)
 
