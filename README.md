@@ -620,6 +620,9 @@ git push --follow-tags
 - 模板与示例数据默认保存在浏览器 localStorage，重要模板建议定期使用「导出 JSON」备份
 - 二维码 / 条形码只保存内容文本，加载模板时重新生成，避免模板文件因图片体积过大
 
+## 联系方式
+-Email：info@dipaxis.com, 2532615203@qq.com, dev@doprint.top
+
 ## 开源协议
 
 本项目基于 [Apache License 2.0](LICENSE) 开源。
