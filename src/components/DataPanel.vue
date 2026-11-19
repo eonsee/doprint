@@ -64,7 +64,7 @@ function importJson() {
 </script>
 
 <template>
-  <div class="data-panel">
+  <div class="data-panel doprint-data-panel" data-doprint-component="data-panel">
     <InspectorSection title="示例数据">
       <p class="data-hint">
         在文本或单元格中输入
@@ -72,8 +72,8 @@ function importJson() {
         ，预览与导出时会替换为这里的示例值。未匹配的字段保持原样，方便排查。
       </p>
 
-      <label class="switch-row data-drag-switch">
-        <span class="switch-label">
+      <label class="switch-row doprint-data-sample-switch">
+        <span class="doprint-switch-label">
           <Eye :size="14" />
           设计时显示示例值
         </span>
@@ -84,13 +84,13 @@ function importJson() {
           @change="onSampleToggle"
         />
       </label>
-      <p v-if="showSampleValues" class="data-hint sample-hint">
+      <p v-if="showSampleValues" class="data-hint doprint-sample-hint">
         画布上的文本和表格会显示示例数据，避免 <code v-pre>{{ 字段 }}</code>
         占位符过长导致换行、遮挡其他元素；双击编辑时仍显示绑定原文。
       </p>
 
-      <label class="switch-row data-drag-switch">
-        <span class="switch-label">
+      <label class="switch-row doprint-data-drag-switch">
+        <span class="doprint-switch-label">
           <GripVertical :size="14" />
           拖入页面
         </span>
@@ -110,7 +110,7 @@ function importJson() {
           :class="{ 'drag-enabled': dataDragEnabled }"
         >
           <span
-            class="field-drag-handle"
+            class="doprint-field-drag-handle"
             :class="{ disabled: !!field.rows }"
             :draggable="dataDragEnabled && !field.rows"
             :title="
@@ -133,7 +133,7 @@ function importJson() {
           />
           <div
             v-if="field.rows"
-            class="field-detail-value"
+            class="doprint-field-detail-value"
             :title="`${field.rows.length} 行明细数据，可通过 JSON 导入更新`"
           >
             明细 {{ field.rows.length }} 行
@@ -156,7 +156,7 @@ function importJson() {
       </div>
       <p v-else class="data-empty">还没有数据字段。</p>
 
-      <p v-if="detailFields.length" class="data-hint detail-hint">
+      <p v-if="detailFields.length" class="data-hint doprint-detail-hint">
         明细集合：{{ detailFields.map((field) => field.key).join('、') }}。
         在表格「明细行绑定」中选择集合后，选中的行会按明细行数重复；单元格用
         <code v-pre>{{集合.列名}}</code> 绑定子表字段。

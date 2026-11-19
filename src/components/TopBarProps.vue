@@ -314,7 +314,7 @@ function alignObjects(action: AlignAction) {
 </script>
 
 <template>
-  <div class="topbar-props">
+  <div class="topbar-props doprint-topbar-props" data-doprint-component="topbar-props">
     <!-- ------------------------------------------------ nothing selected -->
     <template v-if="selection.count === 0">
       <template v-if="uiVisibility.topbar.page">

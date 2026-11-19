@@ -378,7 +378,7 @@ onBeforeUnmount(() => {
   <div
     v-if="table && tableEditing"
     ref="overlayEl"
-    class="canvas-table-editor"
+    class="canvas-table-editor doprint-table-editor"
   >
     <div class="cte-cell-layer" :style="tableLayerStyle">
       <textarea

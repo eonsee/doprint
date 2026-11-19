@@ -306,7 +306,8 @@ function toggleCanvasEditing() {
             :class="{
               selected: isCellSelected(region),
               anchor: isAnchor(region),
-              repeat: repeatConfig !== null && repeatConfig.row === region.row,
+              'doprint-repeat':
+                repeatConfig !== null && repeatConfig.row === region.row,
             }"
             :style="cellStyle(region)"
             :title="`R${region.row + 1}C${region.col + 1}`"

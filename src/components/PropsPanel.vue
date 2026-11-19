@@ -335,7 +335,7 @@ function align(action: AlignAction) {
 </script>
 
 <template>
-  <div class="props-panel">
+  <div class="props-panel doprint-props-panel" data-doprint-component="props-panel">
     <!-- ------------------------------------------------------------ page -->
     <template v-if="selection.count === 0">
       <InspectorSection
@@ -501,7 +501,7 @@ function align(action: AlignAction) {
               <option value="stretch">拉伸铺满</option>
             </select>
           </label>
-          <div class="background-align-row">
+          <div class="doprint-background-align-row">
             <button
               class="btn ghost"
               :class="{ active: backgroundAligning }"
@@ -520,7 +520,7 @@ function align(action: AlignAction) {
               恢复填充
             </button>
           </div>
-          <div class="field-grid background-frame-grid">
+          <div class="field-grid doprint-background-frame-grid">
             <NumField
               label="X"
               :model-value="backgroundFrame.left"
@@ -588,9 +588,9 @@ function align(action: AlignAction) {
           </p>
         </template>
 
-        <div class="overprint-block">
+        <div class="doprint-overprint-block">
           <label class="switch-row">
-            <span class="switch-label">
+            <span class="doprint-switch-label">
               <Printer :size="14" />
               套打模式
             </span>

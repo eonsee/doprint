@@ -644,7 +644,7 @@ const pageStyle = computed(() => {
 </script>
 
 <template>
-  <section class="stage" :class="{ 'no-rulers': !rulersVisible }">
+  <section class="stage doprint-stage" data-doprint-component="stage" :class="{ 'no-rulers': !rulersVisible }">
     <div class="ruler-corner" aria-hidden="true">mm</div>
     <canvas
       ref="rulerTopEl"
@@ -667,8 +667,9 @@ const pageStyle = computed(() => {
       <div class="stage-inner">
         <div
           ref="pageEl"
-          class="stage-page"
-          :class="{ 'field-drop-active': fieldDropActive }"
+          class="stage-page doprint-page"
+          data-doprint-component="page"
+          :class="{ 'doprint-field-drop-active': fieldDropActive }"
           :style="pageStyle"
           @dragover="onPageDragOver"
           @dragleave="onPageDragLeave"
@@ -676,15 +677,15 @@ const pageStyle = computed(() => {
         >
           <div
             v-if="backgroundStyle"
-            class="page-background-clip"
+            class="doprint-page-background-clip"
             aria-hidden="true"
           >
-            <div class="page-background" :style="backgroundStyle"></div>
+            <div class="doprint-page-background" :style="backgroundStyle"></div>
           </div>
-          <canvas ref="canvasEl"></canvas>
+          <canvas ref="canvasEl" class="doprint-canvas" data-doprint-component="canvas"></canvas>
           <div
             v-if="backgroundAligning && backgroundStyle"
-            class="background-align-layer"
+            class="doprint-background-align-layer"
             :class="{ dragging: alignDragging }"
             @pointerdown="onAlignPointerDown"
             @pointermove="onAlignPointerMove"
@@ -741,7 +742,7 @@ const pageStyle = computed(() => {
 
     <div
       v-if="backgroundAligning && backgroundStyle"
-      class="background-align-hint"
+      class="doprint-background-align-hint"
     >
       <Move :size="14" />
       <strong>底图对位</strong>
@@ -752,7 +753,7 @@ const pageStyle = computed(() => {
       </button>
     </div>
 
-    <div v-if="fieldDropActive" class="field-drop-hint">
+    <div v-if="fieldDropActive" class="doprint-field-drop-hint">
       松开鼠标，在落点插入绑定字段
     </div>
 
@@ -763,7 +764,7 @@ const pageStyle = computed(() => {
       </div>
     </div>
 
-    <div class="zoom-bar">
+    <div class="zoom-bar doprint-zoom-bar" data-doprint-component="zoom-bar">
       <button class="zoom-btn" title="缩小" @click="designer.zoomOut()">
         <Minus :size="15" />
       </button>

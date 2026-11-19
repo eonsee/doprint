@@ -199,7 +199,7 @@ async function onFileChange(event: Event) {
 </script>
 
 <template>
-  <header class="topbar">
+  <header class="topbar doprint-topbar" data-doprint-component="topbar">
     <div class="topbar-main">
       <a
         class="brand"
@@ -217,7 +217,7 @@ async function onFileChange(event: Event) {
       <div
         v-if="uiVisibility.topbarMain.template"
         ref="pickerEl"
-        class="template-picker"
+        class="template-picker doprint-template-picker"
       >
         <input
           class="template-name"
@@ -242,7 +242,7 @@ async function onFileChange(event: Event) {
           <FilePlus2 :size="16" />
         </button>
 
-        <div v-if="menuOpen" class="template-menu">
+        <div v-if="menuOpen" class="template-menu doprint-template-menu">
           <div class="template-menu-head">
             <span class="template-menu-title">模板列表</span>
             <div class="template-menu-actions">
@@ -260,11 +260,11 @@ async function onFileChange(event: Event) {
             <div
               v-for="template in templates"
               :key="template.id"
-              class="template-item"
+              class="template-item doprint-template-item"
               :class="{ active: template.active }"
             >
               <button
-                class="template-item-select"
+                class="doprint-template-item-select"
                 :aria-current="template.active ? 'page' : undefined"
                 @click="switchTemplate(template.id)"
               >
@@ -284,7 +284,7 @@ async function onFileChange(event: Event) {
                   :size="15"
                 />
               </button>
-              <div class="template-item-actions">
+              <div class="doprint-template-item-actions">
                 <button
                   class="icon-btn tiny"
                   title="复制模板"
@@ -353,7 +353,7 @@ async function onFileChange(event: Event) {
 
       <span
         v-if="uiVisibility.topbarMain.autosave"
-        class="autosave"
+        class="autosave doprint-autosave"
         title="模板已自动保存到浏览器"
       >
         <Save :size="13" />
@@ -385,7 +385,7 @@ async function onFileChange(event: Event) {
       <div
         v-if="uiVisibility.topbarMain.io"
         ref="imageMenuEl"
-        class="image-export"
+        class="doprint-image-export"
       >
         <button
           class="btn ghost"
@@ -396,7 +396,7 @@ async function onFileChange(event: Event) {
           <ImageDown :size="15" />
           {{ imageBusy ? '生成中…' : '图片' }}
         </button>
-        <div v-if="imageMenuOpen" class="image-menu">
+        <div v-if="imageMenuOpen" class="doprint-image-menu">
           <button type="button" @click="exportImage('png')">
             <strong>PNG</strong>
             <span>无损，适合打印与分享</span>

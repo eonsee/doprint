@@ -25,8 +25,19 @@ const previewItem = computed(
     OFFICIAL_TEMPLATES[0],
 )
 
+const lightboxOpen = ref(false)
+
 function showPreview(item: OfficialTemplate) {
   previewId.value = item.id
+}
+
+function openLightbox() {
+  if (!previewItem.value || !thumbs.value[previewItem.value.id]) return
+  lightboxOpen.value = true
+}
+
+function closeLightbox() {
+  lightboxOpen.value = false
 }
 
 async function loadThumb(item: OfficialTemplate) {
@@ -36,7 +47,7 @@ async function loadThumb(item: OfficialTemplate) {
     return
   }
   try {
-    const url = await designer.renderTemplateThumbnail(item.template, 560, 560)
+    const url = await designer.renderTemplateThumbnail(item.template, 900, 900)
     rememberOfficialThumbnail(item.id, url)
     thumbs.value = { ...thumbs.value, [item.id]: url }
   } catch (err) {
@@ -57,7 +68,12 @@ async function useTemplate(item: OfficialTemplate) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') emit('close')
+  if (event.key !== 'Escape') return
+  if (lightboxOpen.value) {
+    closeLightbox()
+    return
+  }
+  emit('close')
 }
 
 onMounted(() => {
@@ -71,9 +87,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="source-modal-mask" data-modal @click.self="emit('close')">
+  <div class="source-modal-mask doprint-modal" data-doprint-modal="template-center" data-modal @click.self="emit('close')">
     <div
-      class="source-modal template-center-modal"
+      class="source-modal doprint-template-center-modal"
       role="dialog"
       aria-label="模板中心"
     >
@@ -92,22 +108,22 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div class="source-modal-body template-center-body">
-        <div class="tc-topline">
-          <div class="tc-heading">
+      <div class="source-modal-body doprint-template-center-body">
+        <div class="doprint-tc-topline">
+          <div class="doprint-tc-heading">
             <strong>官方模板</strong>
             <span>{{ OFFICIAL_TEMPLATES.length }} 个精选示例</span>
           </div>
-          <span class="tc-tip">悬停查看大图 · 使用后为独立副本</span>
+          <span class="doprint-tc-tip">悬停查看大图 · 使用后为独立副本</span>
         </div>
 
-        <div class="tc-layout">
-          <div class="tc-grid">
+        <div class="doprint-tc-layout">
+          <div class="doprint-tc-grid">
             <button
               v-for="item in OFFICIAL_TEMPLATES"
               :key="item.id"
               type="button"
-              class="tc-card"
+              class="doprint-tc-card"
               :class="{ current: previewId === item.id }"
               :disabled="!!busyId"
               :aria-label="`使用官方模板 ${item.name}`"
@@ -115,41 +131,51 @@ onBeforeUnmount(() => {
               @focus="showPreview(item)"
               @click="useTemplate(item)"
             >
-              <span class="tc-thumb">
+              <span class="doprint-tc-thumb">
                 <img
                   v-if="thumbs[item.id]"
                   :src="thumbs[item.id]"
                   :alt="item.name"
                   loading="lazy"
                 />
-                <span v-else-if="failed[item.id]" class="tc-state">
+                <span v-else-if="failed[item.id]" class="doprint-tc-state">
                   预览生成失败
                 </span>
-                <span v-else class="tc-state">预览生成中…</span>
-                <span class="tc-badge">官方</span>
+                <span v-else class="doprint-tc-state">预览生成中…</span>
+                <span class="doprint-tc-badge">官方</span>
               </span>
-              <span class="tc-meta">
-                <span class="tc-name">{{ item.name }}</span>
-                <span class="tc-size">{{ item.width }} × {{ item.height }} mm</span>
+              <span class="doprint-tc-meta">
+                <span class="doprint-tc-name">{{ item.name }}</span>
+                <span class="doprint-tc-size">{{ item.width }} × {{ item.height }} mm</span>
               </span>
-              <span class="tc-desc">{{ item.description }}</span>
+              <span class="doprint-tc-desc">{{ item.description }}</span>
             </button>
           </div>
 
-          <aside v-if="previewItem" class="tc-preview" aria-live="polite">
-            <div class="tc-preview-stage">
+          <aside v-if="previewItem" class="doprint-tc-preview" aria-live="polite">
+            <div
+              class="doprint-tc-preview-stage"
+              :class="{ clickable: !!thumbs[previewItem.id] }"
+              @click="openLightbox"
+            >
               <img
                 v-if="thumbs[previewItem.id]"
                 :src="thumbs[previewItem.id]"
                 :alt="previewItem.name"
               />
-              <span v-else-if="failed[previewItem.id]" class="tc-state">
+              <span v-else-if="failed[previewItem.id]" class="doprint-tc-state">
                 预览生成失败
               </span>
-              <span v-else class="tc-state">预览生成中…</span>
+              <span v-else class="doprint-tc-state">预览生成中…</span>
+              <span
+                v-if="thumbs[previewItem.id]"
+                class="doprint-tc-zoom-hint"
+              >
+                点击放大
+              </span>
             </div>
-            <div class="tc-preview-info">
-              <div class="tc-preview-title">
+            <div class="doprint-tc-preview-info">
+              <div class="doprint-tc-preview-title">
                 <strong>{{ previewItem.name }}</strong>
                 <span>
                   {{ previewItem.width }} × {{ previewItem.height }} mm
@@ -169,6 +195,18 @@ onBeforeUnmount(() => {
           </aside>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="lightboxOpen && previewItem && thumbs[previewItem.id]"
+      class="doprint-tc-lightbox"
+      data-doprint-modal="template-preview"
+      @click.self="closeLightbox"
+    >
+      <img :src="thumbs[previewItem.id]" :alt="previewItem.name" />
+      <button class="icon-btn" title="关闭大图" @click="closeLightbox">
+        <X :size="18" />
+      </button>
     </div>
   </div>
 </template>

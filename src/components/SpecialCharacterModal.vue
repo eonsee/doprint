@@ -118,7 +118,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="source-modal-mask" data-modal @click.self="emit('close')">
+  <div class="source-modal-mask doprint-modal" data-doprint-modal="symbols" data-modal @click.self="emit('close')">
     <div class="source-modal symbol-modal" role="dialog" aria-label="特殊字符">
       <div class="source-modal-head">
         <div class="source-modal-title">

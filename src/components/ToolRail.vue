@@ -40,7 +40,7 @@ function openSymbols() {
 </script>
 
 <template>
-  <aside v-if="hasVisibleTools" class="tool-rail">
+  <aside v-if="hasVisibleTools" class="tool-rail doprint-tool-rail" data-doprint-component="tool-rail">
     <button
       v-if="uiVisibility.tools.text"
       class="tool"

@@ -42,7 +42,7 @@ function downloadSvg() {
 </script>
 
 <template>
-  <div v-if="open" class="preview-mask" data-modal @click.self="emit('close')">
+  <div v-if="open" class="preview-mask doprint-modal" data-doprint-modal="preview" data-modal @click.self="emit('close')">
       <div class="preview-dialog">
         <div class="preview-head">
           <div>

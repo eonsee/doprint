@@ -11,6 +11,7 @@ import ToolRail from './ToolRail.vue'
 import TopBar from './TopBar.vue'
 import { provideDesigner } from '../designer/context'
 import { createDesigner, type Designer } from '../designer/designer'
+import { PROJECT_SIGNATURE } from '../designer/copyright'
 
 const props = withDefaults(
   defineProps<{
@@ -206,7 +207,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell doprint-designer">
+  <div
+    class="app-shell doprint-designer"
+    data-doprint-designer="true"
+    :data-doprint-signature="PROJECT_SIGNATURE"
+  >
     <TopBar
       :preview-loading="previewLoadingMode"
       :closable="props.closable"

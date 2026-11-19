@@ -54,7 +54,7 @@ watch(
 </script>
 
 <template>
-  <aside v-if="hasTabs" class="inspector">
+  <aside v-if="hasTabs" class="inspector doprint-inspector" data-doprint-component="inspector">
     <div class="tabs">
       <button
         v-for="item in tabs"

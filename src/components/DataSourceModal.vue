@@ -273,7 +273,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="source-modal-mask" data-modal @click.self="emit('close')">
+  <div class="source-modal-mask doprint-modal" data-doprint-modal="datasource" data-modal @click.self="emit('close')">
       <div
         class="source-modal"
         role="dialog"

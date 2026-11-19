@@ -4969,7 +4969,8 @@ export function createDesigner() {
     } as any)
     try {
       if (objects.length) temp.add(...objects)
-      const scale = Math.min(4, maxWidth / width, maxHeight / height)
+      // Higher cap keeps the large hover preview crisp (thumbnails are cached).
+      const scale = Math.min(6, maxWidth / width, maxHeight / height)
       return temp.toDataURL({
         format: 'png',
         multiplier: Math.max(0.5, scale),

@@ -12,7 +12,7 @@ function onLayerClick(id: string, event: MouseEvent) {
 </script>
 
 <template>
-  <div class="layers-panel">
+  <div class="layers-panel doprint-layers-panel" data-doprint-component="layers-panel">
     <div v-if="layers.length === 0" class="layers-empty">画布还没有元素</div>
     <ul v-else>
       <li
