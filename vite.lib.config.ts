@@ -2,6 +2,9 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+const COPYRIGHT_BANNER =
+  '/*! DoPrint Designer | Copyright © 2025-2026 eonsee | https://doprint.top | Apache-2.0 | doprint-designer-f9900b51 */'
+
 // Vue 3 build of the component library. Consumers import
 // `doprint-designer/vue3` and `doprint-designer/vue3/style.css`.
 export default defineConfig({
@@ -19,6 +22,7 @@ export default defineConfig({
       external: ['vue', 'fabric', 'qrcode', 'jsbarcode', 'pdf-lib'],
       output: {
         globals: { vue: 'Vue' },
+        banner: COPYRIGHT_BANNER,
       },
     },
   },

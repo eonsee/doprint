@@ -33,6 +33,8 @@ export default defineConfig({
       external: ['vue', 'fabric', 'qrcode', 'jsbarcode', 'pdf-lib'],
       output: {
         globals: { vue: 'Vue' },
+        banner:
+          '/*! DoPrint Designer | Copyright © 2025-2026 eonsee | https://doprint.top | Apache-2.0 | doprint-designer-f9900b51 */',
       },
     },
   },

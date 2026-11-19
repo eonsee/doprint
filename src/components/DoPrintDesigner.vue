@@ -6,6 +6,7 @@ import GlobalSettingsModal from './GlobalSettingsModal.vue'
 import InspectorPanel from './InspectorPanel.vue'
 import PreviewModal from './PreviewModal.vue'
 import SpecialCharacterModal from './SpecialCharacterModal.vue'
+import TemplateCenterModal from './TemplateCenterModal.vue'
 import ToolRail from './ToolRail.vue'
 import TopBar from './TopBar.vue'
 import { provideDesigner } from '../designer/context'
@@ -38,6 +39,7 @@ function closeDataSource() {
 }
 
 const settingsOpen = ref(false)
+const templateCenterOpen = ref(false)
 
 type PreviewMode = 'vector' | 'pdf'
 
@@ -122,6 +124,14 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
+  // Underlay alignment owns Escape so it can be dismissed without clearing
+  // the template; other shortcuts (undo, etc.) keep working.
+  if (designer.backgroundAligning.value && event.key === 'Escape') {
+    event.preventDefault()
+    designer.setBackgroundAligning(false)
+    return
+  }
+
   const mod = event.ctrlKey || event.metaKey
   const typing = isTypingTarget(event.target)
   const key = event.key.toLowerCase()
@@ -203,6 +213,7 @@ onBeforeUnmount(() => {
       @preview="openPreview"
       @close="emit('close')"
       @settings="settingsOpen = true"
+      @template-center="templateCenterOpen = true"
     />
     <div class="app-body">
       <ToolRail />
@@ -228,6 +239,11 @@ onBeforeUnmount(() => {
     <SpecialCharacterModal
       v-if="symbolPickerOpen"
       @close="symbolPickerOpen = false"
+    />
+
+    <TemplateCenterModal
+      v-if="templateCenterOpen"
+      @close="templateCenterOpen = false"
     />
 
     <transition name="toast">

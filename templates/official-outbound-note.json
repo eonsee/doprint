@@ -1,0 +1,508 @@
+{
+  "version": 1,
+  "name": "出库单 · 明细重复",
+  "page": {
+    "width": 148,
+    "height": 210,
+    "margin": {
+      "top": 8,
+      "right": 8,
+      "bottom": 8,
+      "left": 8
+    },
+    "marginVisible": true,
+    "guides": [],
+    "guidesVisible": true,
+    "watermarkVisible": false,
+    "watermarkText": "Doprint预览版"
+  },
+  "grid": {
+    "size": 5,
+    "visible": true,
+    "snap": true
+  },
+  "data": [
+    {
+      "key": "customer",
+      "value": "杭州示例商贸有限公司"
+    },
+    {
+      "key": "orderNo",
+      "value": "CK-20261119-01"
+    },
+    {
+      "key": "date",
+      "value": "2026-11-19"
+    },
+    {
+      "key": "contact",
+      "value": "王小明"
+    },
+    {
+      "key": "memo",
+      "value": "请核对货品数量与规格，签收后视为验收完成。"
+    },
+    {
+      "key": "total",
+      "value": "1,280.00"
+    },
+    {
+      "key": "totalText",
+      "value": "壹仟贰佰捌拾元整"
+    },
+    {
+      "key": "items",
+      "value": "",
+      "rows": [
+        {
+          "no": "1",
+          "name": "A4 复印纸",
+          "spec": "70g · 500 张",
+          "qty": "20",
+          "price": "22.50",
+          "amount": "450.00"
+        },
+        {
+          "no": "2",
+          "name": "中性笔",
+          "spec": "0.5mm 黑色",
+          "qty": "200",
+          "price": "1.20",
+          "amount": "240.00"
+        },
+        {
+          "no": "3",
+          "name": "四层文件柜",
+          "spec": "钢制",
+          "qty": "1",
+          "price": "590.00",
+          "amount": "590.00"
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "id": "el_ob_title",
+      "kind": "text",
+      "name": "标题",
+      "left": 8,
+      "top": 12,
+      "width": 132,
+      "height": 9.1,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "出 库 单",
+      "fontSize": 7,
+      "fontFamily": "SimSun",
+      "fontWeight": "bold",
+      "textAlign": "center",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_rule",
+      "kind": "line",
+      "name": "标题分隔线",
+      "left": 8,
+      "top": 22.5,
+      "width": 132,
+      "height": 0.25,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 0
+    },
+    {
+      "id": "el_ob_customer",
+      "kind": "text",
+      "name": "客户",
+      "left": 8,
+      "top": 26,
+      "width": 74,
+      "height": 4.16,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "客户：{{customer}}",
+      "fontSize": 3.2,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_order",
+      "kind": "text",
+      "name": "单号",
+      "left": 86,
+      "top": 26,
+      "width": 54,
+      "height": 4.16,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "单号：{{orderNo}}",
+      "fontSize": 3.2,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_contact",
+      "kind": "text",
+      "name": "联系人",
+      "left": 8,
+      "top": 32,
+      "width": 50,
+      "height": 3.9,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "联系人：{{contact}}",
+      "fontSize": 3,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_date",
+      "kind": "text",
+      "name": "日期",
+      "left": 106,
+      "top": 32,
+      "width": 34,
+      "height": 3.9,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "日期：{{date}}",
+      "fontSize": 3,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_table",
+      "kind": "table",
+      "name": "明细表",
+      "left": 8,
+      "top": 40,
+      "width": 132,
+      "height": 56,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "rgb(0,0,0)",
+      "stroke": "",
+      "strokeWidth": 0,
+      "table": {
+        "version": 2,
+        "rowCount": 7,
+        "columnCount": 6,
+        "rowData": {
+          "0": {
+            "h": 8
+          },
+          "1": {
+            "h": 8
+          },
+          "2": {
+            "h": 8
+          },
+          "3": {
+            "h": 8
+          },
+          "4": {
+            "h": 8
+          },
+          "5": {
+            "h": 8
+          },
+          "6": {
+            "h": 8
+          }
+        },
+        "columnData": {
+          "0": {
+            "w": 10
+          },
+          "1": {
+            "w": 43
+          },
+          "2": {
+            "w": 25
+          },
+          "3": {
+            "w": 14
+          },
+          "4": {
+            "w": 18
+          },
+          "5": {
+            "w": 22
+          }
+        },
+        "cellData": {
+          "0": {
+            "0": {
+              "v": "序号",
+              "s": "header"
+            },
+            "1": {
+              "v": "品名",
+              "s": "header"
+            },
+            "2": {
+              "v": "规格",
+              "s": "header"
+            },
+            "3": {
+              "v": "数量",
+              "s": "header"
+            },
+            "4": {
+              "v": "单价",
+              "s": "header"
+            },
+            "5": {
+              "v": "金额",
+              "s": "header"
+            }
+          },
+          "1": {
+            "0": {
+              "v": "{{items.no}}",
+              "s": "center"
+            },
+            "1": {
+              "v": "{{items.name}}",
+              "s": "left"
+            },
+            "2": {
+              "v": "{{items.spec}}",
+              "s": "left"
+            },
+            "3": {
+              "v": "{{items.qty}}",
+              "s": "center"
+            },
+            "4": {
+              "v": "{{items.price}}",
+              "s": "right"
+            },
+            "5": {
+              "v": "{{items.amount}}",
+              "s": "right"
+            }
+          },
+          "6": {
+            "0": {
+              "v": "合计（大写）：{{totalText}}",
+              "s": "total"
+            },
+            "5": {
+              "v": "{{total}}",
+              "s": "amount"
+            }
+          }
+        },
+        "mergeData": [
+          {
+            "startRow": 6,
+            "endRow": 6,
+            "startColumn": 0,
+            "endColumn": 4
+          }
+        ],
+        "styles": {
+          "default": {
+            "align": "left",
+            "valign": "middle"
+          },
+          "header": {
+            "align": "center",
+            "valign": "middle",
+            "bold": true,
+            "fill": "#f3f4f6"
+          },
+          "center": {
+            "align": "center",
+            "valign": "middle"
+          },
+          "left": {
+            "align": "left",
+            "valign": "middle"
+          },
+          "right": {
+            "align": "right",
+            "valign": "middle"
+          },
+          "total": {
+            "align": "right",
+            "valign": "middle",
+            "bold": true
+          },
+          "amount": {
+            "align": "right",
+            "valign": "middle",
+            "bold": true,
+            "fill": "#fef3c7"
+          }
+        },
+        "defaultStyle": "default",
+        "fontSize": 3.18,
+        "fontFamily": "SimSun",
+        "color": "#111827",
+        "borderColor": "#4b5563",
+        "borderWidth": 0.2,
+        "padding": 1.3,
+        "background": "#ffffff",
+        "repeat": {
+          "row": 1,
+          "source": "items"
+        }
+      }
+    },
+    {
+      "id": "el_ob_memo",
+      "kind": "text",
+      "name": "备注",
+      "left": 8,
+      "top": 122,
+      "width": 132,
+      "height": 3.64,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#374151",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "备注：{{memo}}",
+      "fontSize": 2.8,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_sign1",
+      "kind": "text",
+      "name": "制单",
+      "left": 8,
+      "top": 136,
+      "width": 50,
+      "height": 3.9,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "制单：____________",
+      "fontSize": 3,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_sign2",
+      "kind": "text",
+      "name": "发货人",
+      "left": 52,
+      "top": 136,
+      "width": 50,
+      "height": 3.9,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "发货人：__________",
+      "fontSize": 3,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_sign3",
+      "kind": "text",
+      "name": "签收人",
+      "left": 96,
+      "top": 136,
+      "width": 44,
+      "height": 3.9,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#111827",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "签收人：__________",
+      "fontSize": 3,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.3
+    },
+    {
+      "id": "el_ob_footrule",
+      "kind": "line",
+      "name": "页脚分隔线",
+      "left": 8,
+      "top": 190,
+      "width": 132,
+      "height": 0.15,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#9ca3af",
+      "stroke": "",
+      "strokeWidth": 0
+    },
+    {
+      "id": "el_ob_foot",
+      "kind": "text",
+      "name": "页脚",
+      "left": 8,
+      "top": 194,
+      "width": 132,
+      "height": 3.38,
+      "angle": 0,
+      "opacity": 1,
+      "visible": true,
+      "fill": "#6b7280",
+      "stroke": "",
+      "strokeWidth": 1,
+      "text": "本单一式两联，请核对无误后签字确认。",
+      "fontSize": 2.6,
+      "fontFamily": "SimSun",
+      "fontWeight": "normal",
+      "textAlign": "center",
+      "lineHeight": 1.3
+    }
+  ]
+}

@@ -1,3 +1,11 @@
+import {
+  COPYRIGHT_NOTICE,
+  PROJECT_AUTHOR,
+  PROJECT_HOMEPAGE,
+  PROJECT_ID,
+  PROJECT_SIGNATURE,
+} from './copyright'
+
 /** PostScript points per millimetre (1 pt = 1/72 inch). */
 const PT_PER_MM = 72 / 25.4
 
@@ -34,20 +42,30 @@ export async function createPdfFromImage(
   widthMm: number,
   heightMm: number,
   title: string,
+  offsetMm: { x: number; y: number } = { x: 0, y: 0 },
 ): Promise<Uint8Array> {
   // pdf-lib is only needed for previews: load it on first use so the designer
   // itself stays lean.
   const { PDFDocument } = await import('pdf-lib')
-  const pdf = await PDFDocument.create()
+  // Skip pdf-lib's own info-dict stamping so the attribution fields below
+  // remain the ones stored in the document.
+  const pdf = await PDFDocument.create({ updateMetadata: false })
   pdf.setTitle(title || 'DoPrint template')
   pdf.setCreator('DoPrint 设计器')
   pdf.setProducer('DoPrint Designer')
+  // Hidden origin metadata: invisible on the printed page.
+  pdf.setAuthor(PROJECT_AUTHOR)
+  pdf.setSubject(COPYRIGHT_NOTICE)
+  pdf.setKeywords([PROJECT_ID, PROJECT_HOMEPAGE, PROJECT_SIGNATURE])
 
   const page = pdf.addPage([widthMm * PT_PER_MM, heightMm * PT_PER_MM])
   const image = await pdf.embedPng(dataUrlToBytes(pngDataUrl))
   page.drawImage(image, {
-    x: 0,
-    y: 0,
+    // PDF coordinates start at the bottom-left, so a positive Y offset moves
+    // the content down. Anything outside the page box is clipped by viewers
+    // and printers, matching the SVG export.
+    x: offsetMm.x * PT_PER_MM,
+    y: -offsetMm.y * PT_PER_MM,
     width: widthMm * PT_PER_MM,
     height: heightMm * PT_PER_MM,
   })

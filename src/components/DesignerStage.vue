@@ -1,14 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Maximize2, Minus, Plus, Ruler } from 'lucide-vue-next'
+import { Maximize2, Minus, Move, Plus, Ruler } from 'lucide-vue-next'
 import CanvasTableEditor from './CanvasTableEditor.vue'
 import { useDesigner } from '../designer/context'
-import type { GuideOrientation, PageGuide } from '../designer/types'
+import { FIELD_DRAG_MIME } from '../designer/dataDrag'
+import type {
+  GuideOrientation,
+  PageBackgroundTransform,
+  PageGuide,
+} from '../designer/types'
 import { clamp, round } from '../designer/units'
 
 const designer = useDesigner()
-const { page, grid, view, objectCount, zoomPercent, rulersVisible, theme } =
-  designer
+const {
+  page,
+  grid,
+  view,
+  objectCount,
+  zoomPercent,
+  rulersVisible,
+  theme,
+  backgroundLayout,
+  backgroundAligning,
+} = designer
 
 const canvasEl = ref<HTMLCanvasElement>()
 const scrollEl = ref<HTMLDivElement>()
@@ -237,6 +251,134 @@ function onRulerWheel(event: WheelEvent) {
   event.preventDefault()
 }
 
+// ------------------------------------------------------- underlay alignment
+
+/**
+ * Underlay alignment mode. A transparent layer above the Fabric canvas routes
+ * pointer input to the sheet image: drag pans, wheel zooms around the cursor,
+ * double-click restores the configured fit mode.
+ */
+const alignDragging = ref(false)
+let alignStart = {
+  clientX: 0,
+  clientY: 0,
+  frame: null as PageBackgroundTransform | null,
+}
+
+function onAlignPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return
+  const frame = backgroundLayout.value
+  if (!frame) return
+  event.preventDefault()
+  const el = event.currentTarget as HTMLElement
+  el.setPointerCapture?.(event.pointerId)
+  alignStart = {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    frame: { ...frame },
+  }
+  alignDragging.value = true
+}
+
+function onAlignPointerMove(event: PointerEvent) {
+  const start = alignStart.frame
+  if (!alignDragging.value || !start) return
+  const dx = (event.clientX - alignStart.clientX) / view.zoom
+  const dy = (event.clientY - alignStart.clientY) / view.zoom
+  designer.setBackgroundTransform({
+    left: start.left + dx,
+    top: start.top + dy,
+    width: start.width,
+    height: start.height,
+  })
+}
+
+function endAlignDrag(event: PointerEvent) {
+  if (!alignDragging.value) return
+  alignDragging.value = false
+  alignStart.frame = null
+  const el = event.currentTarget as HTMLElement
+  if (el.hasPointerCapture?.(event.pointerId)) {
+    el.releasePointerCapture(event.pointerId)
+  }
+}
+
+function onAlignWheel(event: WheelEvent) {
+  const frame = backgroundLayout.value
+  const pageBox = pageEl.value
+  if (!frame || !pageBox) return
+  event.preventDefault()
+  const unit =
+    event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pageBox.clientHeight : 1
+  const factor = clamp(Math.exp(-event.deltaY * unit * 0.0015), 0.5, 2)
+  const rect = pageBox.getBoundingClientRect()
+  // Keep the point under the cursor fixed while scaling.
+  const anchorX = (event.clientX - rect.left) / view.zoom
+  const anchorY = (event.clientY - rect.top) / view.zoom
+  designer.setBackgroundTransform({
+    left: anchorX - (anchorX - frame.left) * factor,
+    top: anchorY - (anchorY - frame.top) * factor,
+    width: frame.width * factor,
+    height: frame.height * factor,
+  })
+}
+
+function onAlignDoubleClick() {
+  designer.resetBackgroundTransform()
+}
+
+// ------------------------------------------------- dragging data fields in
+
+/** True while a sample-data field is hovering the page as a drop target. */
+const fieldDropActive = ref(false)
+
+function isFieldDrag(event: DragEvent) {
+  const types = event.dataTransfer?.types
+  if (!types) return false
+  return Array.prototype.indexOf.call(types, FIELD_DRAG_MIME) >= 0
+}
+
+function onPageDragOver(event: DragEvent) {
+  if (!designer.dataDragEnabled.value || !isFieldDrag(event)) return
+  // Preventing default is what marks the page as a valid drop target.
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  fieldDropActive.value = true
+}
+
+function onPageDragLeave(event: DragEvent) {
+  const pageBox = pageEl.value
+  const related = event.relatedTarget as Node | null
+  if (pageBox && related && pageBox.contains(related)) return
+  fieldDropActive.value = false
+}
+
+function onPageDrop(event: DragEvent) {
+  const data = event.dataTransfer
+  if (!designer.dataDragEnabled.value || !data || !isFieldDrag(event)) return
+  event.preventDefault()
+  fieldDropActive.value = false
+  const key = data.getData(FIELD_DRAG_MIME)
+  const pageBox = pageEl.value
+  if (!key || !pageBox) return
+  const rect = pageBox.getBoundingClientRect()
+  const left = (event.clientX - rect.left) / view.zoom
+  const top = (event.clientY - rect.top) / view.zoom
+  designer.addFieldText(key, left, top)
+}
+
+function clearFieldDrop() {
+  fieldDropActive.value = false
+}
+
+// Leaving alignment mode (Esc, toolbar toggle, hiding the underlay) must drop
+// any drag in flight so a stale anchor cannot move the sheet on re-entry.
+watch(backgroundAligning, (active) => {
+  if (active) return
+  alignDragging.value = false
+  alignStart.frame = null
+})
+
 // ------------------------------------------------------------- ruler guides
 
 function guideMax(orientation: GuideOrientation): number {
@@ -411,6 +553,8 @@ onMounted(() => {
   rulerLeftEl.value?.addEventListener('wheel', onRulerWheel, {
     passive: false,
   })
+  window.addEventListener('dragend', clearFieldDrop)
+  window.addEventListener('drop', clearFieldDrop)
   scheduleDraw()
 })
 
@@ -419,6 +563,8 @@ onBeforeUnmount(() => {
   scrollEl.value?.removeEventListener('scroll', scheduleDraw)
   rulerTopEl.value?.removeEventListener('wheel', onRulerWheel)
   rulerLeftEl.value?.removeEventListener('wheel', onRulerWheel)
+  window.removeEventListener('dragend', clearFieldDrop)
+  window.removeEventListener('drop', clearFieldDrop)
   removeGuideWindowListeners()
   setGuideCursor(null)
   if (drawFrame) cancelAnimationFrame(drawFrame)
@@ -451,21 +597,30 @@ const marginGuideStyle = computed(() => {
 /**
  * Imported sheet underlay. Rendered as a plain DOM layer under the Fabric
  * canvas so it never takes part in selection, hit testing or serialization.
+ * The frame comes from the designer so the on-screen position matches the
+ * SVG / PDF renderers exactly.
  */
 const backgroundStyle = computed(() => {
   if (!page.backgroundImage || !page.backgroundVisible) return null
-  const size =
-    page.backgroundFit === 'contain'
-      ? 'contain'
-      : page.backgroundFit === 'stretch'
-        ? '100% 100%'
-        : 'cover'
+  const frame = backgroundLayout.value
+  if (!frame) return null
   return {
+    left: `${frame.left * view.zoom}px`,
+    top: `${frame.top * view.zoom}px`,
+    width: `${frame.width * view.zoom}px`,
+    height: `${frame.height * view.zoom}px`,
     backgroundImage: `url("${page.backgroundImage}")`,
-    backgroundSize: size,
     opacity: String(page.backgroundOpacity),
   }
 })
+
+function formatFrame(frame: PageBackgroundTransform | null) {
+  if (!frame) return ''
+  return `${round(frame.left, 1)}, ${round(frame.top, 1)} mm · ${round(
+    frame.width,
+    1,
+  )} × ${round(frame.height, 1)} mm`
+}
 
 const pageStyle = computed(() => {
   const g = Math.max(2, grid.size * view.zoom)
@@ -510,14 +665,34 @@ const pageStyle = computed(() => {
       @pointerdown="onStagePointerDown"
     >
       <div class="stage-inner">
-        <div ref="pageEl" class="stage-page" :style="pageStyle">
+        <div
+          ref="pageEl"
+          class="stage-page"
+          :class="{ 'field-drop-active': fieldDropActive }"
+          :style="pageStyle"
+          @dragover="onPageDragOver"
+          @dragleave="onPageDragLeave"
+          @drop="onPageDrop"
+        >
           <div
             v-if="backgroundStyle"
-            class="page-background"
-            :style="backgroundStyle"
+            class="page-background-clip"
             aria-hidden="true"
-          ></div>
+          >
+            <div class="page-background" :style="backgroundStyle"></div>
+          </div>
           <canvas ref="canvasEl"></canvas>
+          <div
+            v-if="backgroundAligning && backgroundStyle"
+            class="background-align-layer"
+            :class="{ dragging: alignDragging }"
+            @pointerdown="onAlignPointerDown"
+            @pointermove="onAlignPointerMove"
+            @pointerup="endAlignDrag"
+            @pointercancel="endAlignDrag"
+            @wheel="onAlignWheel"
+            @dblclick="onAlignDoubleClick"
+          ></div>
           <div
             v-if="marginGuideStyle"
             class="page-margin-guide"
@@ -562,6 +737,23 @@ const pageStyle = computed(() => {
           <CanvasTableEditor />
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="backgroundAligning && backgroundStyle"
+      class="background-align-hint"
+    >
+      <Move :size="14" />
+      <strong>底图对位</strong>
+      <span>{{ formatFrame(backgroundLayout) }}</span>
+      <em>拖动平移 · 滚轮缩放 · 双击恢复</em>
+      <button class="btn ghost" @click="designer.setBackgroundAligning(false)">
+        完成
+      </button>
+    </div>
+
+    <div v-if="fieldDropActive" class="field-drop-hint">
+      松开鼠标，在落点插入绑定字段
     </div>
 
     <div v-if="objectCount === 0 && !page.backgroundImage" class="empty-hint">

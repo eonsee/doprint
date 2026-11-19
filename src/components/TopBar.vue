@@ -7,6 +7,7 @@ import {
   Eye,
   FilePlus2,
   FileText,
+  LayoutTemplate,
   Moon,
   Redo2,
   Settings2,
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   (e: 'preview', mode: 'vector' | 'pdf'): void
   (e: 'close'): void
   (e: 'settings'): void
+  (e: 'template-center'): void
 }>()
 
 const designer = useDesigner()
@@ -84,6 +86,11 @@ onBeforeUnmount(() => {
 async function createTemplate() {
   menuOpen.value = false
   await designer.newTemplate()
+}
+
+function openTemplateCenter() {
+  menuOpen.value = false
+  emit('template-center')
 }
 
 async function switchTemplate(id: string) {
@@ -189,10 +196,16 @@ async function onFileChange(event: Event) {
         <div v-if="menuOpen" class="template-menu">
           <div class="template-menu-head">
             <span class="template-menu-title">模板列表</span>
-            <button class="btn primary template-create" @click="createTemplate">
-              <FilePlus2 :size="13" />
-              新建模板
-            </button>
+            <div class="template-menu-actions">
+              <button class="btn ghost template-create" @click="openTemplateCenter">
+                <LayoutTemplate :size="13" />
+                模板中心
+              </button>
+              <button class="btn primary template-create" @click="createTemplate">
+                <FilePlus2 :size="13" />
+                新建模板
+              </button>
+            </div>
           </div>
           <div class="template-list">
             <button
@@ -242,6 +255,13 @@ async function onFileChange(event: Event) {
           @click="designer.redo()"
         >
           <Redo2 :size="17" />
+        </button>
+        <button
+          class="icon-btn"
+          title="模板中心 · 官方示例模板"
+          @click="emit('template-center')"
+        >
+          <LayoutTemplate :size="17" />
         </button>
         <button
           class="icon-btn"

@@ -1,13 +1,39 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { PlugZap, Plus, Trash2 } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { Eye, GripVertical, PlugZap, Plus, Trash2 } from 'lucide-vue-next'
 import InspectorSection from './ui/InspectorSection.vue'
 import { useDesigner } from '../designer/context'
+import { FIELD_DRAG_MIME } from '../designer/dataDrag'
 
 const designer = useDesigner()
 const { dataFields } = designer
+const detailFields = computed(() =>
+  dataFields.value.filter(
+    (field) => Array.isArray(field.rows) && field.rows.length > 0,
+  ),
+)
+const dataDragEnabled = designer.dataDragEnabled
+const showSampleValues = designer.showSampleValues
 
 const jsonText = ref('')
+
+function onDragToggle(event: Event) {
+  designer.setDataDragEnabled((event.target as HTMLInputElement).checked)
+}
+
+function onSampleToggle(event: Event) {
+  designer.setShowSampleValues((event.target as HTMLInputElement).checked)
+}
+
+function onFieldDragStart(key: string, event: DragEvent) {
+  if (!dataDragEnabled.value || !event.dataTransfer) {
+    event.preventDefault()
+    return
+  }
+  event.dataTransfer.effectAllowed = 'copy'
+  event.dataTransfer.setData(FIELD_DRAG_MIME, key)
+  event.dataTransfer.setData('text/plain', `{{${key}}}`)
+}
 
 function addField() {
   designer.addDataField()
@@ -46,12 +72,58 @@ function importJson() {
         ，预览与导出时会替换为这里的示例值。未匹配的字段保持原样，方便排查。
       </p>
 
+      <label class="switch-row data-drag-switch">
+        <span class="switch-label">
+          <Eye :size="14" />
+          设计时显示示例值
+        </span>
+        <input
+          class="switch"
+          type="checkbox"
+          :checked="showSampleValues"
+          @change="onSampleToggle"
+        />
+      </label>
+      <p v-if="showSampleValues" class="data-hint sample-hint">
+        画布上的文本和表格会显示示例数据，避免 <code v-pre>{{ 字段 }}</code>
+        占位符过长导致换行、遮挡其他元素；双击编辑时仍显示绑定原文。
+      </p>
+
+      <label class="switch-row data-drag-switch">
+        <span class="switch-label">
+          <GripVertical :size="14" />
+          拖入页面
+        </span>
+        <input
+          class="switch"
+          type="checkbox"
+          :checked="dataDragEnabled"
+          @change="onDragToggle"
+        />
+      </label>
+
       <div v-if="dataFields.length" class="data-field-list">
         <div
           v-for="(field, index) in dataFields"
           :key="`${index}-${field.key}`"
           class="data-field-row"
+          :class="{ 'drag-enabled': dataDragEnabled }"
         >
+          <span
+            class="field-drag-handle"
+            :class="{ disabled: !!field.rows }"
+            :draggable="dataDragEnabled && !field.rows"
+            :title="
+              field.rows
+                ? '明细集合会在表格中按行重复，不直接拖入页面'
+                : dataDragEnabled
+                  ? '拖到页面插入绑定文本'
+                  : '请先开启「拖入页面」'
+            "
+            @dragstart="onFieldDragStart(field.key, $event)"
+          >
+            <GripVertical :size="13" />
+          </span>
           <input
             class="field-key"
             :value="field.key"
@@ -59,7 +131,15 @@ function importJson() {
             spellcheck="false"
             @change="onKeyChange(index, $event)"
           />
+          <div
+            v-if="field.rows"
+            class="field-detail-value"
+            :title="`${field.rows.length} 行明细数据，可通过 JSON 导入更新`"
+          >
+            明细 {{ field.rows.length }} 行
+          </div>
           <input
+            v-else
             class="field-value"
             :value="field.value"
             placeholder="示例值"
@@ -75,6 +155,12 @@ function importJson() {
         </div>
       </div>
       <p v-else class="data-empty">还没有数据字段。</p>
+
+      <p v-if="detailFields.length" class="data-hint detail-hint">
+        明细集合：{{ detailFields.map((field) => field.key).join('、') }}。
+        在表格「明细行绑定」中选择集合后，选中的行会按明细行数重复；单元格用
+        <code v-pre>{{集合.列名}}</code> 绑定子表字段。
+      </p>
 
       <button class="btn ghost wide data-add" @click="addField">
         <Plus :size="14" />

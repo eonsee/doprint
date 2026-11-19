@@ -21,6 +21,9 @@ import {
   ImagePlus,
   Italic,
   Lock,
+  Move,
+  Printer,
+  RotateCcw,
   Trash2,
   Underline,
   Unlock,
@@ -55,6 +58,19 @@ const {
   rulersVisible,
   uiVisibility,
 } = designer
+const backgroundAligning = designer.backgroundAligning
+const backgroundLayout = designer.backgroundLayout
+
+/** Live underlay frame; zeros while the sheet image is still loading. */
+const backgroundFrame = computed(
+  () =>
+    backgroundLayout.value ?? {
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    },
+)
 
 const isMulti = computed(() => selection.count > 1)
 const multiFontTargets = computed(
@@ -235,6 +251,32 @@ function onBackgroundFit(event: Event) {
 
 function onBackgroundPrint(event: Event) {
   designer.setPageBackgroundPrint((event.target as HTMLInputElement).checked)
+}
+
+function toggleBackgroundAligning() {
+  designer.setBackgroundAligning(!backgroundAligning.value)
+}
+
+function onBackgroundFrame(
+  axis: 'left' | 'top' | 'width' | 'height',
+  value: number,
+) {
+  const frame = backgroundLayout.value
+  if (!frame) return
+  designer.setBackgroundTransform({ ...frame, [axis]: value })
+}
+
+function onBackgroundReset() {
+  designer.resetBackgroundTransform()
+}
+
+function onOverprint(event: Event) {
+  designer.setOverprint((event.target as HTMLInputElement).checked)
+}
+
+function onPrintOffset(axis: 'x' | 'y', value: number) {
+  const offset = { ...page.printOffset, [axis]: value }
+  designer.setPrintOffset(offset.x, offset.y)
 }
 
 function onCodeContent(event: Event) {
@@ -459,12 +501,74 @@ function align(action: AlignAction) {
               <option value="stretch">拉伸铺满</option>
             </select>
           </label>
+          <div class="background-align-row">
+            <button
+              class="btn ghost"
+              :class="{ active: backgroundAligning }"
+              :disabled="!page.backgroundVisible"
+              @click="toggleBackgroundAligning"
+            >
+              <Move :size="15" />
+              {{ backgroundAligning ? '结束对位' : '对位调整' }}
+            </button>
+            <button
+              class="btn ghost"
+              :disabled="!page.backgroundTransform"
+              @click="onBackgroundReset"
+            >
+              <RotateCcw :size="15" />
+              恢复填充
+            </button>
+          </div>
+          <div class="field-grid background-frame-grid">
+            <NumField
+              label="X"
+              :model-value="backgroundFrame.left"
+              unit="mm"
+              :step="1"
+              :min="-2000"
+              :max="2000"
+              @update:model-value="onBackgroundFrame('left', $event)"
+            />
+            <NumField
+              label="Y"
+              :model-value="backgroundFrame.top"
+              unit="mm"
+              :step="1"
+              :min="-2000"
+              :max="2000"
+              @update:model-value="onBackgroundFrame('top', $event)"
+            />
+            <NumField
+              label="底图宽"
+              :model-value="backgroundFrame.width"
+              unit="mm"
+              :step="1"
+              :min="5"
+              :max="2000"
+              @update:model-value="onBackgroundFrame('width', $event)"
+            />
+            <NumField
+              label="底图高"
+              :model-value="backgroundFrame.height"
+              unit="mm"
+              :step="1"
+              :min="5"
+              :max="2000"
+              @update:model-value="onBackgroundFrame('height', $event)"
+            />
+          </div>
+          <p class="field-note">
+            点击「对位调整」后可在画布上拖动底图平移、滚轮缩放，双击恢复填充方式；
+            也可直接输入毫米值精确定位。
+          </p>
           <label class="switch-row">
             <span>随模板打印</span>
             <input
               class="switch"
               type="checkbox"
               :checked="page.backgroundPrint"
+              :disabled="page.overprint"
               @change="onBackgroundPrint"
             />
           </label>
@@ -483,6 +587,45 @@ function align(action: AlignAction) {
             便于复刻现成的纸质单据。
           </p>
         </template>
+
+        <div class="overprint-block">
+          <label class="switch-row">
+            <span class="switch-label">
+              <Printer :size="14" />
+              套打模式
+            </span>
+            <input
+              class="switch"
+              type="checkbox"
+              :checked="page.overprint"
+              @change="onOverprint"
+            />
+          </label>
+          <div v-if="page.overprint" class="field-grid">
+            <NumField
+              label="偏移 X"
+              :model-value="page.printOffset.x"
+              unit="mm"
+              :step="0.5"
+              :min="-50"
+              :max="50"
+              @update:model-value="onPrintOffset('x', $event)"
+            />
+            <NumField
+              label="偏移 Y"
+              :model-value="page.printOffset.y"
+              unit="mm"
+              :step="0.5"
+              :min="-50"
+              :max="50"
+              @update:model-value="onPrintOffset('y', $event)"
+            />
+          </div>
+          <p class="field-note">
+            套打用于预印纸张：底图只作为对位参考，不会进入打印输出。
+            打印偏移用于校准打印机与预印表单的错位，正值向右 / 向下，仅影响 SVG / PDF。
+          </p>
+        </div>
         <input
           ref="backgroundInput"
           class="visually-hidden"

@@ -88,6 +88,21 @@ const activeCell = computed<TableCell>(() => {
     : { align: 'left', valign: 'middle' }
 })
 
+/** Detail collections available for repeating a table row. */
+const detailFields = computed(() =>
+  dataFields.value.filter(
+    (field) => Array.isArray(field.rows) && field.rows.length > 0,
+  ),
+)
+const repeatConfig = computed(() => table.value?.repeat ?? null)
+const selectedRowLabel = computed(() => tableSelection.row + 1)
+
+function onRepeatSource(event: Event) {
+  const source = (event.target as HTMLSelectElement).value
+  if (!source) designer.clearTableRepeatRow()
+  else designer.setTableRepeatRow(source)
+}
+
 const canEditText = computed(() => exactRegion.value !== null)
 const cellText = computed(() => activeCell.value.text ?? '')
 const fontSizePx = computed(() =>
@@ -291,6 +306,7 @@ function toggleCanvasEditing() {
             :class="{
               selected: isCellSelected(region),
               anchor: isAnchor(region),
+              repeat: repeatConfig !== null && repeatConfig.row === region.row,
             }"
             :style="cellStyle(region)"
             :title="`R${region.row + 1}C${region.col + 1}`"
@@ -341,6 +357,41 @@ function toggleCanvasEditing() {
         选中表格后无需双击，把指针移到表格内部的列线或行线上，光标变成双向箭头即可拖动：
         相邻的列或行会反向补偿，整张表格的尺寸和位置保持不变。
       </p>
+    </InspectorSection>
+
+    <InspectorSection title="明细行绑定">
+      <label class="select-field compact">
+        <span>明细数据（作用于当前第 {{ selectedRowLabel }} 行）</span>
+        <select :value="repeatConfig?.source ?? ''" @change="onRepeatSource">
+          <option value="">不使用明细数据</option>
+          <option v-for="field in detailFields" :key="field.key" :value="field.key">
+            {{ field.key }}（{{ field.rows?.length ?? 0 }} 行）
+          </option>
+        </select>
+      </label>
+      <p v-if="repeatConfig" class="field-note">
+        第 {{ repeatConfig.row + 1 }} 行将按「{{ repeatConfig.source }}」的数据行数重复。
+        设计画布用第一条明细作为示例，预览 / 导出时自动扩展；明细字段用
+        <code v-pre>{{items.字段}}</code> 绑定。
+      </p>
+      <template v-else-if="detailFields.length">
+        <p class="field-note">
+          选择明细数据后，当前选中的行将成为明细模板行，按子表记录重复。
+          行内使用 <code v-pre>{{明细字段.列名}}</code> 绑定子表字段。
+        </p>
+      </template>
+      <p v-else class="field-note">
+        暂无明细数据。可在「数据」标签的「从 JSON 导入」中粘贴主表对象与对象数组，例如
+        <code v-pre>{"customer": "客户", "items": [{"name": "A", "qty": 1}]}</code>，
+        items 会成为可重复的明细集合。
+      </p>
+      <button
+        v-if="repeatConfig"
+        class="btn ghost wide"
+        @click="designer.clearTableRepeatRow()"
+      >
+        取消明细行
+      </button>
     </InspectorSection>
 
     <InspectorSection title="单元格">

@@ -1,3 +1,4 @@
+/*! DoPrint Designer | Copyright © 2025-2026 eonsee | https://doprint.top | Apache-2.0 | doprint-designer-f9900b51 */
 @import './theme-dark.css';
 
 :root {
@@ -242,6 +243,12 @@ button:disabled {
   font-weight: 650;
   letter-spacing: 0.06em;
   color: var(--muted);
+}
+
+.template-menu-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .btn.template-create {
@@ -747,13 +754,112 @@ button:disabled {
   display: block;
 }
 
-/* Imported sheet underlay, painted below the (transparent) Fabric canvas. */
-.page-background {
+/* Imported sheet underlay, painted below the (transparent) Fabric canvas.
+   The clip box matches the page edge so the aligned sheet previews exactly
+   what the SVG / PDF renderers will print. */
+.page-background-clip {
   position: absolute;
   inset: 0;
-  background-position: center;
-  background-repeat: no-repeat;
+  overflow: hidden;
   pointer-events: none;
+}
+
+.page-background {
+  position: absolute;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  pointer-events: none;
+}
+
+/* Transparent hit layer shown while the underlay is being aligned. */
+.background-align-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  cursor: grab;
+  touch-action: none;
+  background: rgba(37, 99, 235, 0.04);
+  outline: 2px dashed rgba(37, 99, 235, 0.55);
+  outline-offset: -1px;
+}
+
+.background-align-layer.dragging {
+  cursor: grabbing;
+  background: rgba(37, 99, 235, 0.01);
+}
+
+/* A data field is being dragged over the page. */
+.stage-page.field-drop-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  border: 2px dashed var(--accent);
+  background: rgba(37, 99, 235, 0.05);
+  pointer-events: none;
+}
+
+.field-drop-hint {
+  position: absolute;
+  z-index: 6;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.94);
+  color: #fff;
+  font-size: 11.5px;
+  white-space: nowrap;
+  box-shadow: 0 12px 28px -16px rgba(37, 99, 235, 0.9);
+  pointer-events: none;
+}
+
+.background-align-hint {
+  position: absolute;
+  z-index: 6;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px 5px 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e8eef8;
+  font-size: 11.5px;
+  white-space: nowrap;
+  box-shadow: 0 12px 28px -16px rgba(15, 23, 42, 0.7);
+}
+
+.background-align-hint strong {
+  font-weight: 600;
+}
+
+.background-align-hint span {
+  font-variant-numeric: tabular-nums;
+  color: #b9c6da;
+}
+
+.background-align-hint em {
+  font-style: normal;
+  color: #93a3bb;
+}
+
+.background-align-hint .btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eef8;
+}
+
+.background-align-hint .btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
 }
 
 .page-margin-guide {
@@ -1681,6 +1787,44 @@ body.guide-drag-v * {
   border-color: var(--border-strong);
 }
 
+.background-align-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.background-align-row .btn {
+  border-color: var(--border-strong);
+}
+
+.background-align-row .btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.background-frame-grid {
+  margin-bottom: 4px;
+}
+
+.switch-row .switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.switch-row .switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.overprint-block {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
 .action-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1951,9 +2095,64 @@ body.guide-drag-v * {
 
 .data-field-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) 26px;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1.25fr) 26px;
   align-items: center;
   gap: 5px;
+}
+
+.data-drag-switch {
+  padding-top: 0;
+  margin-bottom: 8px;
+}
+
+.field-drag-handle {
+  display: grid;
+  place-items: center;
+  height: 26px;
+  border-radius: 5px;
+  color: #c3ccd8;
+  cursor: grab;
+  user-select: none;
+}
+
+.field-drag-handle:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.field-drag-handle:active {
+  cursor: grabbing;
+}
+
+.data-field-row.drag-enabled .field-drag-handle {
+  color: #8b98a9;
+}
+
+.field-drag-handle.disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.field-detail-value {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #dbe7ff;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-hint {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f4f8ff;
+  color: #4b6a9b;
 }
 
 .data-field-row input {
@@ -2439,6 +2638,111 @@ body.guide-drag-v * {
   flex-shrink: 0;
 }
 
+/* ---------------------------------------------------------- template center */
+
+.template-center-modal {
+  width: min(1000px, 100%);
+}
+
+.template-center-body {
+  background: #f8fafc;
+}
+
+.template-center-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.template-card-thumb {
+  display: grid;
+  place-items: center;
+  height: 190px;
+  padding: 14px;
+  background-color: #eef1f5;
+  background-image: radial-gradient(rgba(15, 23, 42, 0.08) 1px, transparent 1.2px);
+  background-size: 14px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.template-card-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #fff;
+  box-shadow: 0 8px 20px -14px rgba(15, 23, 42, 0.55),
+    0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+
+.template-card-state {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.template-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  padding: 12px 14px 14px;
+}
+
+.template-card-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.template-card-title strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.template-card-title span {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.template-card-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.template-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.template-card-tags span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.template-card-use {
+  margin-top: auto;
+  height: 30px;
+}
+
 /* ----------------------------------------------------------- global settings */
 
 .settings-group {
@@ -2759,6 +3063,19 @@ body.guide-drag-v * {
 
 .table-cell-btn.anchor {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Row bound to a repeating detail collection. */
+.table-cell-btn.repeat {
+  background: #eef4ff;
+  color: var(--accent-strong);
+}
+
+.table-cell-btn.repeat::before {
+  content: '↻';
+  margin-right: 3px;
+  font-size: 9px;
+  color: var(--accent);
 }
 
 .table-range-row {

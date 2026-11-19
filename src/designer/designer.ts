@@ -1,3 +1,7 @@
+/*!
+ * DoPrint Designer — Copyright © 2025-2026 eonsee. Apache-2.0.
+ * Origin marker: doprint-designer-f9900b51
+ */
 import {
   ActiveSelection,
   Canvas,
@@ -17,8 +21,10 @@ import type {
   GuideOrientation,
   LayerItem,
   PageBackgroundFit,
+  PageBackgroundTransform,
   PageGuide,
   PageTemplate,
+  PrintOffset,
   SelectionState,
   TableCell,
   TableConfig,
@@ -38,8 +44,10 @@ import {
 } from './units'
 import {
   parseDataJson,
+  resolveBindings,
   resolveCheckboxBindings,
   resolveTemplateBindings,
+  sampleFieldsWithDetails,
 } from './binding'
 import {
   buildRegions,
@@ -75,6 +83,14 @@ import {
 import { buildTableObject } from './tableFabric'
 import { drawTableSelection } from './tableOverlay'
 import { createPdfFromImage, previewPixelRatio } from './pdf'
+import { readDataDragEnabled, writeDataDragEnabled } from './dataDrag'
+import { findOfficialTemplate } from './officialTemplates'
+import {
+  injectSvgMetadata,
+  projectMeta,
+  registerHiddenProjectMarker,
+  verifyProjectIntegrity,
+} from './copyright'
 import {
   defaultCodeText,
   renderCodeDataUrl,
@@ -89,6 +105,7 @@ const CASE_TEMPLATE_ID = 'tpl_case_billing'
 /** Marks that the bundled case template has been offered on this browser. */
 const CASE_TEMPLATE_SEED_KEY = 'doprint.case-template.seeded.v1'
 const RULER_STORAGE_KEY = 'doprint.rulers.visible'
+const SAMPLE_VALUES_STORAGE_KEY = 'doprint.show-sample-values.v1'
 const THEME_STORAGE_KEY = 'doprint.theme.v1'
 const UI_VISIBILITY_STORAGE_KEY = 'doprint.ui.visibility.v1'
 const HISTORY_LIMIT = 50
@@ -115,6 +132,11 @@ const BACKGROUND_MAX_DATA_URL = 1_200_000
 const BACKGROUND_MAX_DIMENSION = 2400
 const DEFAULT_BACKGROUND_OPACITY = 1
 const DEFAULT_BACKGROUND_FIT: PageBackgroundFit = 'cover'
+/** Limits for manual underlay alignment: keep the image near the page. */
+const BACKGROUND_MIN_MM = 5
+const BACKGROUND_MAX_SCALE = 6
+/** Printer registration offset is a fine adjustment, not a layout tool. */
+const PRINT_OFFSET_LIMIT = 50
 
 // Make our element metadata survive cloning / serialization.
 FabricObject.customProperties = [
@@ -124,6 +146,7 @@ FabricObject.customProperties = [
   'locked',
   'tableData',
   'codeText',
+  'rawText',
 ]
 
 let seq = 0
@@ -477,6 +500,33 @@ function readRulersVisible(): boolean {
   }
 }
 
+/**
+ * Whether the design canvas shows resolved sample values instead of raw
+ * `{{field}}` tokens. On by default: tokens are often much longer than real
+ * data, which makes boxes wrap and look like they overlap while designing.
+ */
+function readShowSampleValues(): boolean {
+  try {
+    const saved = localStorage.getItem(SAMPLE_VALUES_STORAGE_KEY)
+    return saved === null ? true : saved !== '0'
+  } catch {
+    return true
+  }
+}
+
+function writeShowSampleValues(enabled: boolean) {
+  try {
+    localStorage.setItem(SAMPLE_VALUES_STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    // Preference persistence is best-effort.
+  }
+}
+
+/** Logical binding text stored on a Fabric text object. */
+function rawTextOf(obj: any): string {
+  return typeof obj?.rawText === 'string' ? obj.rawText : String(obj?.text ?? '')
+}
+
 export type DesignerTheme = 'light' | 'dark'
 
 function readTheme(): DesignerTheme {
@@ -618,6 +668,47 @@ function readBackgroundImage(value: unknown): string {
     : ''
 }
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : fallback
+}
+
+function readBackgroundTransform(
+  value: unknown,
+): PageBackgroundTransform | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Partial<PageBackgroundTransform>
+  const width = finiteNumber(record.width)
+  const height = finiteNumber(record.height)
+  if (width <= 0 || height <= 0) return null
+  // Keep imported templates from requesting absurd image dimensions.
+  const limit = 10_000
+  return {
+    left: clamp(round(finiteNumber(record.left), 1), -limit, limit),
+    top: clamp(round(finiteNumber(record.top), 1), -limit, limit),
+    width: clamp(round(width, 1), 1, limit),
+    height: clamp(round(height, 1), 1, limit),
+  }
+}
+
+function readPrintOffset(value: unknown): PrintOffset {
+  if (!value || typeof value !== 'object') return { x: 0, y: 0 }
+  const record = value as Partial<PrintOffset>
+  return {
+    x: clamp(
+      round(finiteNumber(record.x), 1),
+      -PRINT_OFFSET_LIMIT,
+      PRINT_OFFSET_LIMIT,
+    ),
+    y: clamp(
+      round(finiteNumber(record.y), 1),
+      -PRINT_OFFSET_LIMIT,
+      PRINT_OFFSET_LIMIT,
+    ),
+  }
+}
+
 function readGuides(value: unknown, width: number, height: number): PageGuide[] {
   if (!Array.isArray(value)) return []
   const guides: PageGuide[] = []
@@ -645,6 +736,11 @@ function readGuides(value: unknown, width: number, height: number): PageGuide[] 
 }
 
 export function createDesigner() {
+  // Hidden attribution: verifies the embedded marker and leaves a frozen,
+  // non-enumerable global for diagnostics. Nothing is rendered in the UI.
+  verifyProjectIntegrity()
+  registerHiddenProjectMarker()
+
   const ready = ref(false)
   const templateName = ref('未命名模板')
   const page = reactive({
@@ -660,7 +756,14 @@ export function createDesigner() {
     backgroundOpacity: DEFAULT_BACKGROUND_OPACITY,
     backgroundFit: DEFAULT_BACKGROUND_FIT,
     backgroundPrint: false,
+    backgroundTransform: null as PageBackgroundTransform | null,
+    overprint: false,
+    printOffset: { x: 0, y: 0 } as PrintOffset,
   })
+  /** Intrinsic pixel size of the imported underlay, used for fit framing. */
+  const backgroundNatural = reactive({ width: 0, height: 0 })
+  /** Whether the stage is currently in underlay alignment mode. */
+  const backgroundAligning = ref(false)
   const grid = reactive({ size: 5, visible: true, snap: true })
   const view = reactive({ zoom: 3.2 })
   const rulersVisible = ref(readRulersVisible())
@@ -678,6 +781,14 @@ export function createDesigner() {
   const dataFields = ref<DataField[]>([])
   /** Rendered by the designer root so the dialog is not trapped in a panel's stacking context. */
   const dataSourceOpen = ref(false)
+  /** Whether sample-data fields can be dragged onto the page. */
+  const dataDragEnabled = ref(readDataDragEnabled())
+  /** Whether the canvas shows resolved sample values instead of raw tokens. */
+  const showSampleValues = ref(readShowSampleValues())
+  /** Flat + first-detail-row fields used by the design-canvas resolver. */
+  const designSampleFields = computed(() =>
+    sampleFieldsWithDetails(dataFields.value),
+  )
   /** Special-character / bound-checkbox picker, rendered by the root. */
   const symbolPickerOpen = ref(false)
   /** Editable copy of the selected table's configuration. */
@@ -877,7 +988,45 @@ export function createDesigner() {
       refreshSelection()
     })
 
-    c.on('text:changed', () => {
+    c.on('text:changed', (e: any) => {
+      const target = e.target as any
+      // While editing, the canvas shows the raw binding; keep rawText in sync
+      // so serialization and undo see the logical content.
+      if (target && isTextType(typeOf(target)) && target.isEditing) {
+        target.rawText = String(target.text ?? '')
+      }
+      refreshSelection()
+      scheduleCommit()
+    })
+
+    c.on('text:editing:entered', (e: any) => {
+      const target = e.target as any
+      if (!target || !isTextType(typeOf(target))) return
+      // Fabric may start editing before our double-click handler runs; force
+      // the editor to show the binding, not the resolved sample value.
+      const raw = rawTextOf(target)
+      if (target.text === raw) return
+      target.set('text', raw)
+      const hidden = target.hiddenTextarea as HTMLTextAreaElement | undefined
+      if (hidden) {
+        hidden.value = raw
+        const end = raw.length
+        target.selectionStart = end
+        target.selectionEnd = end
+        hidden.selectionStart = end
+        hidden.selectionEnd = end
+      }
+      target.setCoords()
+      c.requestRenderAll()
+    })
+
+    c.on('text:editing:exited', (e: any) => {
+      const target = e.target as any
+      if (!target || !isTextType(typeOf(target))) return
+      target.rawText = String(target.text ?? '')
+      // Restore the resolved sample value now that editing has finished.
+      applyTextDisplay(target)
+      c.requestRenderAll()
       refreshSelection()
       scheduleCommit()
     })
@@ -1066,6 +1215,13 @@ export function createDesigner() {
       if (!target || !isTextType(typeOf(target)) || target.isEditing) return
       if (target.editable === false) return
       c.setActiveObject(target)
+      // Edit the binding itself, not the resolved sample value shown on the
+      // design canvas.
+      const raw = rawTextOf(target)
+      if (target.text !== raw) {
+        target.set('text', raw)
+        target.setCoords()
+      }
       target.enterEditing(e.e)
       c.requestRenderAll()
     })
@@ -1690,6 +1846,8 @@ export function createDesigner() {
       const dataUrl = await prepareBackgroundImage(file)
       page.backgroundImage = dataUrl
       page.backgroundVisible = true
+      // A new sheet image invalidates any previous manual alignment.
+      page.backgroundTransform = null
       scheduleCommit()
       notify('已导入纸张底图')
     } catch (err) {
@@ -1700,6 +1858,7 @@ export function createDesigner() {
 
   function setPageBackgroundVisible(visible: boolean) {
     page.backgroundVisible = !!visible
+    if (!page.backgroundVisible) backgroundAligning.value = false
     scheduleCommit()
   }
 
@@ -1710,11 +1869,13 @@ export function createDesigner() {
 
   function setPageBackgroundFit(fit: PageBackgroundFit) {
     page.backgroundFit = readBackgroundFit(fit)
+    // Picking a fit mode is an explicit request to re-frame the sheet.
+    page.backgroundTransform = null
     scheduleCommit()
   }
 
   function setPageBackgroundPrint(enabled: boolean) {
-    page.backgroundPrint = !!enabled
+    page.backgroundPrint = !!enabled && !page.overprint
     scheduleCommit()
   }
 
@@ -1722,12 +1883,42 @@ export function createDesigner() {
     if (!page.backgroundImage) return
     page.backgroundImage = ''
     page.backgroundPrint = false
+    page.backgroundTransform = null
+    backgroundAligning.value = false
     scheduleCommit()
     notify('已移除纸张底图')
   }
 
+  /** Intrinsic size of the underlay, needed to frame it before alignment. */
+  function loadBackgroundNatural() {
+    const src = page.backgroundImage
+    if (!src) {
+      backgroundNatural.width = 0
+      backgroundNatural.height = 0
+      return
+    }
+    const image = new Image()
+    image.onload = () => {
+      if (page.backgroundImage !== src) return
+      backgroundNatural.width = image.naturalWidth || 0
+      backgroundNatural.height = image.naturalHeight || 0
+    }
+    image.onerror = () => {
+      if (page.backgroundImage !== src) return
+      backgroundNatural.width = 0
+      backgroundNatural.height = 0
+    }
+    image.src = src
+  }
+
+  watch(() => page.backgroundImage, loadBackgroundNatural, { immediate: true })
+
   /** Frame the underlay inside the page for the selected fit mode. */
-  function backgroundFrame(naturalWidth: number, naturalHeight: number) {
+  function backgroundFrame(
+    naturalWidth: number,
+    naturalHeight: number,
+  ): PageBackgroundTransform {
+    if (page.backgroundTransform) return { ...page.backgroundTransform }
     const width = Math.max(1, naturalWidth)
     const height = Math.max(1, naturalHeight)
     if (page.backgroundFit === 'stretch') {
@@ -1747,12 +1938,102 @@ export function createDesigner() {
     }
   }
 
+  /**
+   * Current underlay frame in millimetres. Shared by the DOM underlay and the
+   * SVG / PDF renderers so alignment is identical everywhere.
+   */
+  const backgroundLayout = computed<PageBackgroundTransform | null>(() => {
+    if (!page.backgroundImage) return null
+    if (page.backgroundTransform) return { ...page.backgroundTransform }
+    if (!backgroundNatural.width || !backgroundNatural.height) return null
+    return backgroundFrame(backgroundNatural.width, backgroundNatural.height)
+  })
+
+  function clampBackgroundTransform(
+    frame: PageBackgroundTransform,
+  ): PageBackgroundTransform {
+    const maxWidth = Math.max(page.width, page.height) * BACKGROUND_MAX_SCALE
+    const maxHeight = Math.max(page.width, page.height) * BACKGROUND_MAX_SCALE
+    const width = clamp(round(frame.width, 1), BACKGROUND_MIN_MM, maxWidth)
+    const height = clamp(round(frame.height, 1), BACKGROUND_MIN_MM, maxHeight)
+    const limitX = page.width + width
+    const limitY = page.height + height
+    return {
+      left: clamp(round(frame.left, 1), -limitX, limitX),
+      top: clamp(round(frame.top, 1), -limitY, limitY),
+      width,
+      height,
+    }
+  }
+
+  /** Persist a manually aligned underlay frame (millimetres). */
+  function setBackgroundTransform(frame: PageBackgroundTransform | null) {
+    if (!frame) {
+      if (!page.backgroundTransform) return
+      page.backgroundTransform = null
+      scheduleCommit()
+      return
+    }
+    if (!(Number(frame.width) > 0) || !(Number(frame.height) > 0)) return
+    page.backgroundTransform = clampBackgroundTransform(frame)
+    scheduleCommit()
+  }
+
+  /** Fall back to the fit mode computed frame. */
+  function resetBackgroundTransform() {
+    if (!page.backgroundTransform) return
+    page.backgroundTransform = null
+    scheduleCommit()
+    notify('已恢复底图填充方式')
+  }
+
+  /** Toggle interactive underlay alignment on the stage. */
+  function setBackgroundAligning(enabled: boolean) {
+    const next = !!enabled && !!page.backgroundImage
+    if (next && !page.backgroundVisible) page.backgroundVisible = true
+    backgroundAligning.value = next
+    if (next) clearSelection()
+  }
+
+  /**
+   * 套打 mode: the sheet image represents pre-printed paper, so it is an
+   * alignment reference only and never enters SVG / PDF output.
+   */
+  function setOverprint(enabled: boolean) {
+    page.overprint = !!enabled
+    if (page.overprint) page.backgroundPrint = false
+    scheduleCommit()
+  }
+
+  /** Registration offset applied to printed output, in millimetres. */
+  function setPrintOffset(x: number, y: number) {
+    page.printOffset.x = clamp(
+      round(Number(x) || 0, 1),
+      -PRINT_OFFSET_LIMIT,
+      PRINT_OFFSET_LIMIT,
+    )
+    page.printOffset.y = clamp(
+      round(Number(y) || 0, 1),
+      -PRINT_OFFSET_LIMIT,
+      PRINT_OFFSET_LIMIT,
+    )
+    scheduleCommit()
+  }
+
+  function printOffsetMm(): PrintOffset {
+    // The registration offset belongs to 套打: outside that mode output must
+    // stay aligned with the canvas even if a value is still stored.
+    if (!page.overprint) return { x: 0, y: 0 }
+    return { x: round(page.printOffset.x, 2), y: round(page.printOffset.y, 2) }
+  }
+
   /** Underlay copy for the preview canvas; null unless it should be printed. */
   async function backgroundObject(): Promise<FabricObject | null> {
     if (
       !page.backgroundImage ||
       !page.backgroundVisible ||
-      !page.backgroundPrint
+      !page.backgroundPrint ||
+      page.overprint
     ) {
       return null
     }
@@ -2052,7 +2333,11 @@ export function createDesigner() {
       textSource && isTableObject(textSource) ? tableConfigOf(textSource) : null
 
     selection.code.content = single ? String(first.codeText ?? '') : ''
-    selection.text.content = single ? first.text ?? '' : ''
+    selection.text.content = single
+      ? isTextType(typeOf(first))
+        ? rawTextOf(first)
+        : String(first.text ?? '')
+      : ''
     selection.text.fontSize = round(
       (tableSource ? tableSource.fontSize : (textSource.fontSize ?? 0)) *
         Math.abs(textSource.scaleY ?? 1),
@@ -2310,12 +2595,63 @@ export function createDesigner() {
       splitByGrapheme: true,
       editable: true,
     } as any)
+    ;(text as any).rawText = content
+    applyTextDisplay(text)
     decorate(text, 'text')
     commitAdd(text)
   }
 
   function addText() {
     addTextWithContent('双击编辑文本')
+  }
+
+  function setDataDragEnabled(enabled: boolean) {
+    dataDragEnabled.value = !!enabled
+    writeDataDragEnabled(dataDragEnabled.value)
+  }
+
+  /**
+   * Add a text element bound to one sample-data field. Used when a field is
+   * dragged from the data panel onto the page.
+   */
+  function addFieldText(key: string, left?: number, top?: number) {
+    if (!canvas) return
+    const name = String(key ?? '').trim()
+    if (!name) return
+    const width = 60
+    const height = round(DEFAULT_TEXT_SIZE * 1.3, 1)
+    const bounds = printableBounds() ?? {
+      left: 0,
+      top: 0,
+      width: page.width,
+      height: page.height,
+    }
+    const maxLeft = Math.max(bounds.left, bounds.left + bounds.width - width)
+    const maxTop = Math.max(bounds.top, bounds.top + bounds.height - height)
+    const pos =
+      left === undefined || top === undefined
+        ? nextPosition(width, height)
+        : {
+            left: round(clamp(Number(left), bounds.left, maxLeft), 1),
+            top: round(clamp(Number(top), bounds.top, maxTop), 1),
+          }
+    const text = new Textbox(`{{${name}}}`, {
+      ...pos,
+      width,
+      fontSize: DEFAULT_TEXT_SIZE,
+      fontFamily: DEFAULT_FONT,
+      fontWeight: 'normal',
+      fill: DEFAULT_TEXT_FILL,
+      textAlign: 'left',
+      lineHeight: 1.3,
+      splitByGrapheme: true,
+      editable: true,
+    } as any)
+    ;(text as any).rawText = `{{${name}}}`
+    applyTextDisplay(text)
+    decorate(text, 'text', name)
+    commitAdd(text)
+    notify(`已插入字段 ${name}`)
   }
 
   /**
@@ -2331,7 +2667,8 @@ export function createDesigner() {
       if (active.isEditing && typeof active.insertChars === 'function') {
         active.insertChars(value)
       } else {
-        active.set('text', `${active.text ?? ''}${value}`)
+        active.set('rawText', `${rawTextOf(active)}${value}`)
+        applyTextDisplay(active)
       }
       active.setCoords()
       canvas.requestRenderAll()
@@ -2382,9 +2719,10 @@ export function createDesigner() {
 
     const active = canvas?.getActiveObject() as any
     if (active && isTextType(typeOf(active))) {
-      const result = replaceCheckboxChars(String(active.text ?? ''), tokens)
+      const result = replaceCheckboxChars(rawTextOf(active), tokens)
       if (result.count) {
-        active.set('text', result.text)
+        active.set('rawText', result.text)
+        applyTextDisplay(active)
         active.setCoords()
         canvas!.requestRenderAll()
         refreshSelection()
@@ -2455,26 +2793,72 @@ export function createDesigner() {
    * them against the sample data while leaving `{{field}}` tokens raw.
    */
   function displayTableText(text: string) {
+    if (showSampleValues.value) {
+      return resolveBindings(text, designSampleFields.value)
+    }
     return resolveCheckboxBindings(text, dataFields.value)
   }
 
+  /** Text shown on the design canvas for a raw binding string. */
+  function designText(raw: string): string {
+    return showSampleValues.value
+      ? resolveBindings(raw, designSampleFields.value)
+      : raw
+  }
+
   /**
-   * Rebuild tables that contain checkbox bindings so the design canvas shows
-   * the new checked / unchecked symbols after sample data changes.
+   * Keep `rawText` (the real binding) and `text` (what the canvas draws) in
+   * sync. While a text box is being edited it must show the raw token, so the
+   * user edits the binding rather than the sample value.
    */
-  function refreshCheckboxTables() {
+  function applyTextDisplay(obj: any) {
+    if (!obj || !isTextType(typeOf(obj))) return
+    const raw = rawTextOf(obj)
+    obj.rawText = raw
+    if (obj.isEditing) return
+    const next = designText(raw)
+    if (obj.text !== next) obj.set('text', next)
+    obj.setCoords()
+  }
+
+  /** Re-resolve every text element after sample data or the mode changes. */
+  function refreshTextDisplays() {
+    if (!canvas) return
+    let changed = 0
+    for (const obj of canvas.getObjects()) {
+      if (!isTextType(typeOf(obj))) continue
+      applyTextDisplay(obj)
+      changed += 1
+    }
+    if (!changed) return
+    canvas.requestRenderAll()
+    refreshSelection()
+  }
+
+  function setShowSampleValues(enabled: boolean) {
+    const next = !!enabled
+    if (showSampleValues.value === next) return
+    showSampleValues.value = next
+    writeShowSampleValues(next)
+  }
+
+  /**
+   * Rebuild tables that contain bindings so the design canvas reflects data
+   * changes (checkbox symbols, and sample values when that mode is enabled).
+   */
+  function refreshBindingTables() {
     if (!canvas) return
     let changed = 0
     for (const obj of [...canvas.getObjects()]) {
       if (!isTableObject(obj)) continue
       const config = tableConfigOf(obj)
       if (!config) continue
-      const hasCheckbox = Object.values(config.cellData).some((row) =>
+      const hasBinding = Object.values(config.cellData).some((row) =>
         Object.values(row ?? {}).some(
-          (cell) => typeof cell.v === 'string' && cell.v.includes('{{#'),
+          (cell) => typeof cell.v === 'string' && cell.v.includes('{{'),
         ),
       )
-      if (!hasCheckbox) continue
+      if (!hasBinding) continue
 
       const anyObj = obj as any
       const group = buildTableObject(config, displayTableText)
@@ -2508,10 +2892,19 @@ export function createDesigner() {
   watch(
     dataFields,
     () => {
-      if (!restoring) refreshCheckboxTables()
+      if (restoring) return
+      refreshBindingTables()
+      refreshTextDisplays()
     },
     { deep: true },
   )
+
+  watch(showSampleValues, () => {
+    if (restoring) return
+    refreshBindingTables()
+    refreshTextDisplays()
+    scheduleCommit()
+  })
 
   function addTable(rows = 3, cols = 3) {
     if (!canvas) return
@@ -2974,7 +3367,10 @@ export function createDesigner() {
       }
 
       if (!tableObj && isTextType(typeOf(obj))) {
-        if (patch.text !== undefined) obj.set('text', patch.text)
+        if (patch.text !== undefined) {
+          obj.set('rawText', patch.text)
+          applyTextDisplay(obj)
+        }
         if (patch.fontSize !== undefined) {
           const sy = Math.abs(obj.scaleY || 1)
           obj.set('fontSize', Math.max(0.5, patch.fontSize / sy))
@@ -3533,6 +3929,57 @@ export function createDesigner() {
     commitTableConfig(normalizeTableConfig({ ...table.value, ...patch }))
   }
 
+  /**
+   * Mark the selected row as the repeating detail row. The row is repeated
+   * once per item of the chosen detail collection when previewing / printing.
+   */
+  function setTableRepeatRow(source: string, row?: number) {
+    if (!table.value) return
+    const key = String(source ?? '').trim()
+    if (!key) {
+      clearTableRepeatRow()
+      return
+    }
+    const target = clamp(
+      Math.floor(Number(row ?? tableSelection.row)),
+      0,
+      table.value.rowCount - 1,
+    )
+    updateTableStyle({ repeat: { row: target, source: key } })
+    notify(`第 ${target + 1} 行已设为明细行，将按「${key}」的数据行数重复`)
+  }
+
+  function clearTableRepeatRow() {
+    if (!table.value?.repeat) return
+    updateTableStyle({ repeat: undefined })
+    notify('已取消明细行绑定')
+  }
+
+  /** Replace a detail collection's rows (used by host integrations). */
+  function setDetailRows(
+    key: string,
+    rows: Record<string, string>[],
+  ) {
+    const name = String(key ?? '').trim()
+    if (!name) return
+    const clean = (Array.isArray(rows) ? rows : []).map((row) => {
+      const out: Record<string, string> = {}
+      for (const [column, value] of Object.entries(row ?? {})) {
+        out[column] = String(value ?? '')
+      }
+      return out
+    })
+    const index = dataFields.value.findIndex((field) => field.key === name)
+    if (index >= 0) {
+      dataFields.value = dataFields.value.map((field, i) =>
+        i === index ? { ...field, value: '', rows: clean } : field,
+      )
+    } else {
+      dataFields.value = [...dataFields.value, { key: name, value: '', rows: clean }]
+    }
+    scheduleCommit()
+  }
+
   /** Move the selected table back inside the margins after a size change. */
   function settleTablePosition() {
     if (!canvas) return
@@ -3667,12 +4114,29 @@ export function createDesigner() {
     if (!Array.isArray(input)) return []
     return input
       .filter((field: any) => field && typeof field.key === 'string' && field.key)
-      .map((field: any) => ({
-        key: String(field.key),
-        value: field.value === undefined || field.value === null
-          ? ''
-          : String(field.value),
-      }))
+      .map((field: any) => {
+        const out: DataField = {
+          key: String(field.key),
+          value:
+            field.value === undefined || field.value === null
+              ? ''
+              : String(field.value),
+        }
+        if (Array.isArray(field.rows)) {
+          const rows = field.rows
+            .filter((row: any) => row && typeof row === 'object')
+            .map((row: any) => {
+              const clean: Record<string, string> = {}
+              for (const [key, value] of Object.entries(row)) {
+                clean[key] =
+                  value === undefined || value === null ? '' : String(value)
+              }
+              return clean
+            })
+          if (rows.length) out.rows = rows
+        }
+        return out
+      })
   }
 
   // ---------------------------------------------------------- persistence
@@ -3765,6 +4229,7 @@ export function createDesigner() {
     return {
       version: 1,
       name,
+      meta: projectMeta(),
       page: {
         width: DEFAULT_PAGE.width,
         height: DEFAULT_PAGE.height,
@@ -3774,6 +4239,8 @@ export function createDesigner() {
         guidesVisible: true,
         watermarkVisible: true,
         watermarkText: DEFAULT_WATERMARK_TEXT,
+        overprint: false,
+        printOffset: { x: 0, y: 0 },
       },
       grid: { size: 5, visible: true, snap: true },
       data: [],
@@ -3846,6 +4313,11 @@ export function createDesigner() {
       backgroundOpacity: round(page.backgroundOpacity, 2),
       backgroundFit: page.backgroundFit,
       backgroundPrint: page.backgroundPrint,
+      backgroundTransform: page.backgroundTransform
+        ? { ...page.backgroundTransform }
+        : null,
+      overprint: page.overprint,
+      printOffset: { ...page.printOffset },
     }
   }
 
@@ -3858,6 +4330,7 @@ export function createDesigner() {
     return {
       version: 1,
       name: templateName.value,
+      meta: projectMeta(),
       page: pageSnapshot(),
       grid: { size: grid.size, visible: grid.visible, snap: grid.snap },
       data: dataFields.value.map((field) => ({ ...field })),
@@ -3918,7 +4391,7 @@ export function createDesigner() {
     if (dash.length) element.strokeDash = dash
 
     if (kind === 'text') {
-      element.text = String(o.text ?? '')
+      element.text = rawTextOf(o)
       element.fontSize = round((o.fontSize ?? 0) * sy, 2)
       element.fontFamily = String(o.fontFamily || DEFAULT_FONT)
       element.fontWeight = normalizeWeight(o.fontWeight)
@@ -3960,6 +4433,7 @@ export function createDesigner() {
       return {
         version: 1,
         name: templateName.value,
+        meta: projectMeta(),
         page: pageSnapshot(),
         grid: { size: grid.size, visible: grid.visible, snap: grid.snap },
         data: dataFields.value.map((field) => ({ ...field })),
@@ -3972,6 +4446,7 @@ export function createDesigner() {
       'name',
       'locked',
       'tableData',
+      'rawText',
     ]) as any
     return toTemplateFromFabric(json)
   }
@@ -4135,7 +4610,8 @@ export function createDesigner() {
 
     if (el.kind === 'text') {
       const fontSize = Math.max(0.5, el.fontSize || DEFAULT_TEXT_SIZE)
-      const obj = new Textbox(el.text ?? '', {
+      const raw = el.text ?? ''
+      const obj = new Textbox(designText(raw), {
         ...common,
         width: Math.max(2, el.width || 60),
         fontSize,
@@ -4154,6 +4630,7 @@ export function createDesigner() {
         splitByGrapheme: true,
         editable: true,
       } as any)
+      ;(obj as any).rawText = raw
       return Promise.resolve(finish(obj))
     }
 
@@ -4229,6 +4706,7 @@ export function createDesigner() {
   ) {
     if (!canvas) return
     const token = ++loadToken
+    backgroundAligning.value = false
     restoring = true
     try {
       canvas.discardActiveObject()
@@ -4257,6 +4735,16 @@ export function createDesigner() {
       )
       page.backgroundFit = readBackgroundFit(template.page?.backgroundFit)
       page.backgroundPrint = template.page?.backgroundPrint === true
+      page.backgroundTransform = readBackgroundTransform(
+        template.page?.backgroundTransform,
+      )
+      page.overprint = template.page?.overprint === true
+      if (page.overprint) page.backgroundPrint = false
+      page.printOffset = readPrintOffset(template.page?.printOffset)
+      if (!page.backgroundImage) {
+        page.backgroundTransform = null
+        backgroundAligning.value = false
+      }
       grid.size = template.grid?.size ?? 5
       grid.visible = template.grid?.visible ?? true
       grid.snap = template.grid?.snap ?? true
@@ -4343,6 +4831,88 @@ export function createDesigner() {
     notify('已新建空白模板')
   }
 
+  function uniqueTemplateName(base: string): string {
+    const wanted = String(base ?? '').trim() || '未命名模板'
+    const names = new Set(
+      templateRecords.map((record) => record.template.name || '未命名模板'),
+    )
+    if (!names.has(wanted)) return wanted
+    let index = 2
+    while (names.has(`${wanted} ${index}`)) index += 1
+    return `${wanted} ${index}`
+  }
+
+  /**
+   * Clone an official sample from the template center into the local library
+   * and open it. The official template itself is never mutated.
+   */
+  async function useOfficialTemplate(id: string) {
+    const official = findOfficialTemplate(id)
+    if (!official) return
+    cancelPendingCommit()
+    commitNow()
+    const now = Date.now()
+    const template = JSON.parse(
+      JSON.stringify(official.template),
+    ) as PageTemplate
+    template.name = uniqueTemplateName(official.name)
+    activeTemplateId = templateId()
+    templateRecords.push({
+      id: activeTemplateId,
+      template,
+      createdAt: now,
+      updatedAt: now,
+    })
+    await loadTemplate(template)
+    resetHistory()
+    notify(`已使用官方模板「${official.name}」`)
+  }
+
+  /**
+   * Render a template into a PNG thumbnail for the template center. Element
+   * bindings are resolved with the template's own sample data.
+   */
+  async function renderTemplateThumbnail(
+    template: PageTemplate,
+    maxWidth = 520,
+    maxHeight = 520,
+  ): Promise<string> {
+    const width = clamp(
+      Number(template.page?.width) || DEFAULT_PAGE.width,
+      20,
+      1000,
+    )
+    const height = clamp(
+      Number(template.page?.height) || DEFAULT_PAGE.height,
+      20,
+      1000,
+    )
+    const resolved = resolveTemplateBindings(template, template.data ?? [])
+    const objects = (
+      await Promise.all(
+        (resolved.elements ?? []).map((element) => elementToObject(element)),
+      )
+    ).filter((object): object is FabricObject => !!object)
+
+    const temp = new StaticCanvas(undefined, {
+      width,
+      height,
+      enableRetinaScaling: false,
+      backgroundColor: '#ffffff',
+    } as any)
+    try {
+      if (objects.length) temp.add(...objects)
+      const scale = Math.min(4, maxWidth / width, maxHeight / height)
+      return temp.toDataURL({
+        format: 'png',
+        multiplier: Math.max(0.5, scale),
+        enableRetinaScaling: false,
+      })
+    } finally {
+      temp.destroy()
+    }
+  }
+
   async function openTemplate(id: string) {
     if (id === activeTemplateId) return
     const record = templateRecords.find((item) => item.id === id)
@@ -4380,13 +4950,23 @@ export function createDesigner() {
   async function generateSVG(): Promise<string> {
     if (!canvas) return ''
     const temp = await buildPreviewCanvas()
+    const offset = printOffsetMm()
     try {
-      return temp.toSVG({
+      const svg = temp.toSVG({
         width: `${round(page.width, 2)}mm`,
         height: `${round(page.height, 2)}mm`,
-        viewBox: { x: 0, y: 0, width: page.width, height: page.height },
+        // A registration offset shifts the printed content inside the fixed
+        // page box without touching any element coordinates.
+        viewBox: {
+          x: -offset.x,
+          y: -offset.y,
+          width: page.width,
+          height: page.height,
+        },
         suppressPreamble: true,
       })
+      // Hidden origin marker: ignored by renderers, kept in downloaded files.
+      return injectSvgMetadata(svg, templateName.value)
     } finally {
       temp.destroy()
     }
@@ -4407,6 +4987,7 @@ export function createDesigner() {
         page.width,
         page.height,
         templateName.value,
+        printOffsetMm(),
       )
     } finally {
       temp.destroy()
@@ -4439,6 +5020,11 @@ export function createDesigner() {
     zoomPercent,
     dataFields,
     dataSourceOpen,
+    dataDragEnabled,
+    setDataDragEnabled,
+    showSampleValues,
+    setShowSampleValues,
+    addFieldText,
     symbolPickerOpen,
     table,
     tableSelection,
@@ -4474,6 +5060,13 @@ export function createDesigner() {
     setPageBackgroundFit,
     setPageBackgroundPrint,
     removePageBackground,
+    backgroundLayout,
+    backgroundAligning,
+    setBackgroundAligning,
+    setBackgroundTransform,
+    resetBackgroundTransform,
+    setOverprint,
+    setPrintOffset,
     setGuidesVisible,
     addGuide,
     moveGuide,
@@ -4522,6 +5115,9 @@ export function createDesigner() {
     splitTableCells,
     updateSelectedCells,
     updateTableStyle,
+    setTableRepeatRow,
+    clearTableRepeatRow,
+    setDetailRows,
     setTableSize,
     setTableWidthValue,
     setTableHeightValue,
@@ -4555,6 +5151,8 @@ export function createDesigner() {
     importTemplate,
     newTemplate,
     openTemplate,
+    useOfficialTemplate,
+    renderTemplateThumbnail,
     generateSVG,
     generatePDF,
   }

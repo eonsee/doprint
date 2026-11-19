@@ -1,3 +1,5 @@
+import type { ProjectMeta } from './copyright'
+
 export type ElementKind =
   | 'text'
   | 'rect'
@@ -88,6 +90,16 @@ export interface TableMergeData {
  * Version 1 (the dense `rows` / `cells` / `merges` shape) is migrated on read
  * by `normalizeTableConfig`.
  */
+/**
+ * Master-detail binding for a table: the row at `row` is repeated once per
+ * row of the detail collection `source` (a DataField with `rows`). Cells in
+ * that row address the collection columns as `{{source.column}}`.
+ */
+export interface TableRepeatConfig {
+  row: number
+  source: string
+}
+
 export interface TableConfig {
   version: 2
   rowCount: number
@@ -115,6 +127,8 @@ export interface TableConfig {
   padding: number
   /** table background / merge mask colour */
   background: string
+  /** optional master-detail repeating row */
+  repeat?: TableRepeatConfig
 }
 
 /** Tools that can be shown or hidden in the left rail. */
@@ -188,6 +202,12 @@ export interface UiVisibilityConfig {
 export interface DataField {
   key: string
   value: string
+  /**
+   * Repeating child rows for master-detail data. When present, the field is a
+   * detail collection: table rows bound to it repeat once per row, and its
+   * columns are addressed as `{{key.column}}`.
+   */
+  rows?: Record<string, string>[]
 }
 
 export interface TemplateElement {
@@ -250,6 +270,23 @@ export type GuideOrientation = 'horizontal' | 'vertical'
 /** How the imported sheet underlay is fitted to the page. */
 export type PageBackgroundFit = 'cover' | 'contain' | 'stretch'
 
+/**
+ * Explicit underlay placement in millimetres, produced by aligning the
+ * imported sheet image interactively. It overrides the fit-derived frame.
+ */
+export interface PageBackgroundTransform {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/** Printer registration offset in millimetres, applied to printed output. */
+export interface PrintOffset {
+  x: number
+  y: number
+}
+
 /** A design guide dragged out from a ruler; never printed or exported. */
 export interface PageGuide {
   id: string
@@ -264,6 +301,8 @@ export interface PageGuide {
 export interface PageTemplate {
   version: 1
   name: string
+  /** Hidden generator / copyright marker; never rendered in the UI. */
+  meta?: ProjectMeta
   page: {
     width: number
     height: number
@@ -291,6 +330,15 @@ export interface PageTemplate {
     backgroundFit?: PageBackgroundFit
     /** whether the underlay is included in SVG / PDF output */
     backgroundPrint?: boolean
+    /** explicit placement after manual alignment; overrides `backgroundFit` */
+    backgroundTransform?: PageBackgroundTransform | null
+    /**
+     * 套打 (overprint) mode: the sheet image is an alignment reference for
+     * pre-printed paper and is never included in output.
+     */
+    overprint?: boolean
+    /** registration offset for printed output, in millimetres */
+    printOffset?: PrintOffset
   }
   grid: { size: number; visible: boolean; snap: boolean }
   /** sample data used for binding preview */

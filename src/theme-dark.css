@@ -412,6 +412,48 @@
   border-color: var(--border);
 }
 
+[data-theme='dark'] .template-center-body {
+  background: #0f1621;
+}
+
+[data-theme='dark'] .template-card {
+  background: #18202d;
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .template-card-thumb {
+  background-color: #141a24;
+  background-image: radial-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1.2px);
+  border-bottom-color: var(--border);
+}
+
+[data-theme='dark'] .template-card-desc,
+[data-theme='dark'] .template-card-title span,
+[data-theme='dark'] .template-card-state {
+  color: #8592a6;
+}
+
+[data-theme='dark'] .template-card-tags span {
+  background: rgba(37, 99, 235, 0.18);
+  color: #93b4ff;
+}
+
+[data-theme='dark'] .field-detail-value {
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(37, 99, 235, 0.32);
+  color: #93b4ff;
+}
+
+[data-theme='dark'] .detail-hint {
+  background: #141d2b;
+  color: #8fa8cc;
+}
+
+[data-theme='dark'] .table-cell-btn.repeat {
+  background: rgba(37, 99, 235, 0.16);
+  color: #93b4ff;
+}
+
 [data-theme='dark'] .settings-row:hover {
   background: var(--surface-hover);
   border-color: var(--border-strong);

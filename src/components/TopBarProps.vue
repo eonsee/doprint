@@ -16,6 +16,7 @@ import {
   ImagePlus,
   Italic,
   Lock,
+  Move,
   Settings2,
   Trash2,
   Underline,
@@ -46,6 +47,11 @@ const {
   pagePreset,
   uiVisibility,
 } = designer
+const backgroundAligning = designer.backgroundAligning
+
+function toggleBackgroundAligning() {
+  designer.setBackgroundAligning(!backgroundAligning.value)
+}
 
 const isMulti = computed(() => selection.count > 1)
 const isLandscape = computed(() => page.width > page.height)
@@ -394,6 +400,14 @@ function alignObjects(action: AlignAction) {
             />
             <span>显示</span>
           </label>
+          <button
+            class="icon-btn tiny"
+            :class="{ active: backgroundAligning }"
+            :title="backgroundAligning ? '结束底图对位' : '对位调整底图（拖动平移 / 滚轮缩放）'"
+            @click="toggleBackgroundAligning"
+          >
+            <Move :size="13" />
+          </button>
           <button
             class="icon-btn tiny"
             title="移除纸张底图"

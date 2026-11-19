@@ -1,4 +1,11 @@
-import type { DataField, PageTemplate } from './types'
+import { cloneTableConfig, getRowHeights } from './table'
+import type {
+  DataField,
+  PageTemplate,
+  TableCellData,
+  TableConfig,
+  TableRowData,
+} from './types'
 
 /** Matches `{{ field }}` placeholders. Field names may contain any character except braces. */
 const TOKEN_RE = /\{\{\s*([^{}]+?)\s*\}\}/g
@@ -127,18 +134,34 @@ function flattenValue(value: unknown, key: string, out: DataField[]) {
   }
   if (typeof value === 'object') {
     if (Array.isArray(value)) {
-      if (key) {
-        out.push({
-          key,
-          value: value
-            .map((item) =>
-              item !== null && typeof item === 'object'
-                ? JSON.stringify(item)
-                : String(item ?? ''),
-            )
-            .join(', '),
+      if (!key) return
+      // An array of objects is master-detail data: keep each item as one
+      // child row so tables can repeat a row per item.
+      const objects = value.filter(
+        (item): item is Record<string, unknown> =>
+          !!item && typeof item === 'object' && !Array.isArray(item),
+      )
+      if (objects.length && objects.length === value.length) {
+        const rows = objects.map((item) => {
+          const row: Record<string, string> = {}
+          for (const child of flattenData(item)) {
+            row[child.key] = child.value
+          }
+          return row
         })
+        out.push({ key, value: '', rows })
+        return
       }
+      out.push({
+        key,
+        value: value
+          .map((item) =>
+            item !== null && typeof item === 'object'
+              ? JSON.stringify(item)
+              : String(item ?? ''),
+          )
+          .join(', '),
+      })
       return
     }
     for (const [childKey, childValue] of Object.entries(
@@ -173,29 +196,177 @@ export function parseDataJson(text: string): DataField[] {
   return fields
 }
 
+/** Rows of a detail collection; empty when the field is not a collection. */
+export function detailRowsOf(
+  fields: DataField[],
+  source: string,
+): Record<string, string>[] {
+  const field = fields.find((item) => item.key === source)
+  return Array.isArray(field?.rows) ? field!.rows! : []
+}
+
+export function hasDetailRows(fields: DataField[]): boolean {
+  return fields.some((field) => Array.isArray(field.rows) && field.rows.length > 0)
+}
+
+/**
+ * Flatten the first row of every detail collection into `source.column`
+ * fields. Used by the design canvas and by text boxes outside repeat tables so
+ * detail bindings still show a representative value.
+ */
+export function sampleFieldsWithDetails(fields: DataField[]): DataField[] {
+  const out = [...fields]
+  for (const field of fields) {
+    const first = field.rows?.[0]
+    if (!first) continue
+    for (const [column, value] of Object.entries(first)) {
+      out.push({
+        key: `${field.key}.${column}`,
+        value: String(value ?? ''),
+      })
+    }
+  }
+  return out
+}
+
+function detailRowFields(
+  source: string,
+  row: Record<string, string>,
+): DataField[] {
+  return Object.entries(row).map(([column, value]) => ({
+    key: `${source}.${column}`,
+    value: String(value ?? ''),
+  }))
+}
+
+/**
+ * Expand a table's repeating row once per detail item and resolve the cells in
+ * those rows against the item. Master fields remain available inside the row.
+ * Merged cells fully inside the repeating row are replicated; merges that span
+ * the repeating row and other rows are dropped in the output.
+ */
+export function expandRepeatTable(
+  config: TableConfig,
+  fields: DataField[],
+): TableConfig {
+  const repeat = config.repeat
+  if (!repeat) return config
+  const items = detailRowsOf(fields, repeat.source)
+  const next = cloneTableConfig(config)
+  delete next.repeat
+  if (!items.length) return next
+
+  const templateRow = Math.max(
+    0,
+    Math.min(config.rowCount - 1, Math.floor(repeat.row)),
+  )
+  const templateCells = config.cellData[templateRow] ?? {}
+
+  const resolveRowCells = (item?: Record<string, string>) => {
+    const context = item ? [...fields, ...detailRowFields(repeat.source, item)] : fields
+    const result: Record<number, TableCellData> = {}
+    for (const [colKey, cell] of Object.entries(templateCells)) {
+      const copy: TableCellData = { ...cell }
+      if (typeof copy.v === 'string') {
+        copy.v = resolveBindings(copy.v, context)
+      }
+      result[Number(colKey)] = copy
+    }
+    return result
+  }
+
+  const extra = items.length - 1
+  if (extra <= 0) {
+    next.cellData[templateRow] = resolveRowCells(items[0])
+    return next
+  }
+
+  const templateHeight = getRowHeights(config)[templateRow]
+  const rowData: Record<number, TableRowData> = {}
+  for (let row = 0; row < config.rowCount; row += 1) {
+    if (row < templateRow) {
+      rowData[row] = { ...config.rowData[row] }
+    } else if (row > templateRow) {
+      rowData[row + extra] = { ...config.rowData[row] }
+    }
+  }
+  for (let index = 0; index < items.length; index += 1) {
+    rowData[templateRow + index] = {
+      ...(config.rowData[templateRow] ?? {}),
+      h: templateHeight,
+    }
+  }
+
+  const cellData: Record<number, Record<number, TableCellData>> = {}
+  for (const [rowKey, rowCells] of Object.entries(config.cellData)) {
+    const row = Number(rowKey)
+    if (row < templateRow) cellData[row] = rowCells
+    else if (row > templateRow) cellData[row + extra] = rowCells
+  }
+  for (let index = 0; index < items.length; index += 1) {
+    cellData[templateRow + index] = resolveRowCells(items[index])
+  }
+
+  const mergeData = []
+  for (const merge of config.mergeData) {
+    if (merge.endRow < templateRow) {
+      mergeData.push({ ...merge })
+    } else if (merge.startRow > templateRow) {
+      mergeData.push({
+        ...merge,
+        startRow: merge.startRow + extra,
+        endRow: merge.endRow + extra,
+      })
+    } else if (
+      merge.startRow === templateRow &&
+      merge.endRow === templateRow
+    ) {
+      for (let index = 0; index < items.length; index += 1) {
+        mergeData.push({
+          ...merge,
+          startRow: templateRow + index,
+          endRow: templateRow + index,
+        })
+      }
+    }
+  }
+
+  return {
+    ...next,
+    rowCount: config.rowCount + extra,
+    rowData,
+    cellData,
+    mergeData,
+  }
+}
+
 /** Deep-clone a template and resolve text / table-cell bindings. */
 export function resolveTemplateBindings(
   template: PageTemplate,
   fields: DataField[],
 ): PageTemplate {
   const clone = JSON.parse(JSON.stringify(template)) as PageTemplate
+  const sampleFields = sampleFieldsWithDetails(fields)
   for (const element of clone.elements ?? []) {
     if (typeof element.text === 'string') {
-      element.text = resolveBindings(element.text, fields)
+      element.text = resolveBindings(element.text, sampleFields)
     }
     if (
       (element.kind === 'qrcode' || element.kind === 'barcode') &&
       typeof element.codeText === 'string'
     ) {
-      element.codeText = resolveBindings(element.codeText, fields)
+      element.codeText = resolveBindings(element.codeText, sampleFields)
     }
     if (element.table) {
+      if (element.table.repeat) {
+        element.table = expandRepeatTable(element.table, fields)
+      }
       // Cells are sparse (row -> column -> { v, s }), so only non-empty
       // values are visited.
       for (const row of Object.values(element.table.cellData ?? {})) {
         for (const cell of Object.values(row ?? {})) {
           if (typeof cell.v === 'string') {
-            cell.v = resolveBindings(cell.v, fields)
+            cell.v = resolveBindings(cell.v, sampleFields)
           }
         }
       }

@@ -410,6 +410,15 @@ function readTableFields(raw: any, config: TableConfig): TableConfig {
     typeof raw.background === 'string' && raw.background
       ? raw.background
       : DEFAULT_TABLE.background
+  const repeat = raw.repeat
+  if (repeat && typeof repeat === 'object') {
+    const row = Math.floor(Number(repeat.row))
+    const source =
+      typeof repeat.source === 'string' ? repeat.source.trim() : ''
+    if (source && Number.isFinite(row) && row >= 0 && row < config.rowCount) {
+      config.repeat = { row, source }
+    }
+  }
   return config
 }
 
