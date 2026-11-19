@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowRight, LayoutTemplate, X } from 'lucide-vue-next'
+import { LayoutTemplate, X } from 'lucide-vue-next'
 import { useDesigner } from '../designer/context'
 import {
   OFFICIAL_TEMPLATES,
@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
           </span>
           <div>
             <strong>模板中心</strong>
-            <span>官方示例模板，一键复制到本地模板库</span>
+            <span>官方精选模板，点击卡片即可复制到本地</span>
           </div>
         </div>
         <button class="icon-btn" title="关闭" @click="emit('close')">
@@ -82,48 +82,46 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="source-modal-body template-center-body">
-        <p class="source-lead">
-          以下模板由项目官方维护，使用后会克隆一份到你的本地模板列表，
-          修改不会影响官方原件；示例数据可直接在「数据」面板中替换。
-        </p>
+        <div class="tc-topline">
+          <div class="tc-heading">
+            <strong>官方模板</strong>
+            <span>{{ OFFICIAL_TEMPLATES.length }} 个精选示例</span>
+          </div>
+          <span class="tc-tip">使用后为独立副本，可自由修改</span>
+        </div>
 
-        <div class="template-center-grid">
-          <article
+        <div class="tc-grid">
+          <button
             v-for="item in OFFICIAL_TEMPLATES"
             :key="item.id"
-            class="template-card"
+            type="button"
+            class="tc-card"
+            :disabled="!!busyId"
+            :aria-label="`使用官方模板 ${item.name}`"
+            @click="useTemplate(item)"
           >
-            <div class="template-card-thumb">
+            <span class="tc-thumb">
               <img
                 v-if="thumbs[item.id]"
                 :src="thumbs[item.id]"
                 :alt="item.name"
                 loading="lazy"
               />
-              <span v-else-if="failed[item.id]" class="template-card-state">
+              <span v-else-if="failed[item.id]" class="tc-state">
                 预览生成失败
               </span>
-              <span v-else class="template-card-state">正在生成预览…</span>
-            </div>
-            <div class="template-card-body">
-              <div class="template-card-title">
-                <strong>{{ item.name }}</strong>
-                <span>{{ item.width }} × {{ item.height }} mm</span>
-              </div>
-              <p class="template-card-desc">{{ item.description }}</p>
-              <div class="template-card-tags">
-                <span v-for="tag in item.tags" :key="tag">{{ tag }}</span>
-              </div>
-              <button
-                class="btn primary template-card-use"
-                :disabled="!!busyId"
-                @click="useTemplate(item)"
-              >
-                {{ busyId === item.id ? '正在打开…' : '使用此模板' }}
-                <ArrowRight v-if="busyId !== item.id" :size="14" />
-              </button>
-            </div>
-          </article>
+              <span v-else class="tc-state">预览生成中…</span>
+              <span class="tc-badge">官方</span>
+              <span class="tc-use">{{
+                busyId === item.id ? '正在打开…' : '使用此模板'
+              }}</span>
+            </span>
+            <span class="tc-meta">
+              <span class="tc-name">{{ item.name }}</span>
+              <span class="tc-size">{{ item.width }} × {{ item.height }} mm</span>
+            </span>
+            <span class="tc-desc">{{ item.description }}</span>
+          </button>
         </div>
       </div>
     </div>

@@ -204,6 +204,7 @@ export const KIND_LABEL: Record<ElementKind, string> = {
 
 export type LayerAction = 'up' | 'down' | 'top' | 'bottom'
 export type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'
+export type ImageExportFormat = 'png' | 'jpeg' | 'webp'
 export type DistributeAction = 'horizontal' | 'vertical'
 
 // Fabric v6 reports `obj.type` in lower case (e.g. 'textbox', 'rect').
@@ -4868,6 +4869,72 @@ export function createDesigner() {
     notify(`已使用官方模板「${official.name}」`)
   }
 
+  /** Duplicate a stored template and open the copy. */
+  async function duplicateTemplate(id: string) {
+    const record = templateRecords.find((item) => item.id === id)
+    if (!record) return
+    cancelPendingCommit()
+    commitNow()
+    const now = Date.now()
+    const copy = JSON.parse(
+      JSON.stringify(record.template),
+    ) as PageTemplate
+    copy.name = uniqueTemplateName(
+      `${record.template.name || '未命名模板'} 副本`,
+    )
+    activeTemplateId = templateId()
+    templateRecords.push({
+      id: activeTemplateId,
+      template: copy,
+      createdAt: now,
+      updatedAt: now,
+    })
+    await loadTemplate(copy)
+    resetHistory()
+    refreshTemplates()
+    writeLibrary()
+    notify(`已复制模板「${copy.name}」`)
+  }
+
+  /**
+   * Delete a stored template. Removing the active template switches to the
+   * nearest remaining one; deleting the last template creates a blank one so
+   * the designer never ends up without a document.
+   */
+  async function deleteTemplate(id: string) {
+    const index = templateRecords.findIndex((item) => item.id === id)
+    if (index < 0) return
+    const removed = templateRecords[index]
+    const wasActive = id === activeTemplateId
+    cancelPendingCommit()
+    templateRecords.splice(index, 1)
+
+    if (!templateRecords.length) {
+      const now = Date.now()
+      const template = createBlankTemplate('未命名模板')
+      activeTemplateId = templateId()
+      templateRecords.push({
+        id: activeTemplateId,
+        template,
+        createdAt: now,
+        updatedAt: now,
+      })
+      await loadTemplate(template)
+      resetHistory()
+      notify(`已删除模板「${removed.template.name}」，并新建空白模板`)
+    } else if (wasActive) {
+      const next = templateRecords[Math.max(0, index - 1)]
+      activeTemplateId = next.id
+      await loadTemplate(next.template)
+      resetHistory()
+      notify(`已删除模板「${removed.template.name}」`)
+    } else {
+      notify(`已删除模板「${removed.template.name}」`)
+    }
+    refreshTemplates()
+    writeLibrary()
+  }
+
   /**
    * Render a template into a PNG thumbnail for the template center. Element
    * bindings are resolved with the template's own sample data.
@@ -4991,6 +5058,46 @@ export function createDesigner() {
       )
     } finally {
       temp.destroy()
+    }
+  }
+
+  /**
+   * Rasterise the resolved template as a page-sized image. The canvas
+   * background is painted white so every format looks like the printed sheet
+   * (JPEG has no alpha channel and would otherwise turn black).
+   */
+  async function generateImage(
+    format: ImageExportFormat = 'png',
+  ): Promise<string> {
+    const temp = await buildPreviewCanvas()
+    try {
+      temp.backgroundColor = '#ffffff'
+      return temp.toDataURL({
+        format,
+        quality: format === 'png' ? 1 : 0.92,
+        multiplier: previewPixelRatio(page.width, page.height),
+        enableRetinaScaling: false,
+      })
+    } finally {
+      temp.destroy()
+    }
+  }
+
+  async function downloadImage(format: ImageExportFormat = 'png') {
+    try {
+      const dataUrl = await generateImage(format)
+      if (!dataUrl) return
+      const ext = format === 'jpeg' ? 'jpg' : format
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = `${sanitizeFilename(templateName.value)}.${ext}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      notify(`已导出 ${ext.toUpperCase()} 图片`)
+    } catch (err) {
+      console.warn('image export failed', err)
+      notify('图片导出失败')
     }
   }
 
@@ -5151,10 +5258,14 @@ export function createDesigner() {
     importTemplate,
     newTemplate,
     openTemplate,
+    duplicateTemplate,
+    deleteTemplate,
     useOfficialTemplate,
     renderTemplateThumbnail,
     generateSVG,
     generatePDF,
+    generateImage,
+    downloadImage,
   }
 }
 
