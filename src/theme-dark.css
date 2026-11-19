@@ -465,6 +465,20 @@
   color: #93b4ff;
 }
 
+[data-theme='dark'] .tc-preview {
+  background: #18202d;
+  border-color: var(--border);
+}
+
+[data-theme='dark'] .tc-preview-stage {
+  background-color: #141a24;
+  background-image: radial-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1.2px);
+}
+
+[data-theme='dark'] .tc-preview-title strong {
+  color: var(--text);
+}
+
 [data-theme='dark'] .field-detail-value {
   background: rgba(37, 99, 235, 0.16);
   border-color: rgba(37, 99, 235, 0.32);
